@@ -134,7 +134,9 @@ GALAXIES = {
     'sculptor': dict(
         name='Sculptor', ra0=15.0392, dec0=-33.7186,
         center_ra=15.0183, center_dec=-33.7186,          # Munoz+2018 centre for the radius
-        distance_kpc=84.0, v_sys=111.2, ellipticity=0.32, pa_deg=92.0,
+        # e and D follow Munoz et al. (2018) / Martinez-Vazquez et al. (2015) as tabulated by
+        # Arroyo-Polonio et al. (2024, A&A 692, A195, Table 1), who analyse this same sample.
+        distance_kpc=83.9, v_sys=111.2, ellipticity=0.33, pa_deg=92.0,
         re_mr=0.18, re_mp=0.28,                          # tracer Plummer scales (kpc)
         catalog='J/A+A/675/A49', cols=None,              # Tolstoy+2023 ([Fe/H] auto-detected)
         feh_quality_keep=(0,), mem_keep=('m',),
@@ -3070,6 +3072,121 @@ def run_bias_gate(gamma_true=(0.4, 1.0), n_real=40, out="figure_bias_gate.png"):
     return results
 
 
+def _discrete_twopop_mock(gamma_true, seed, n=1338, rs=1.0, rhos=6.0e7,
+                          f_mr=0.34, a_mr=0.1875, feh_mr=-1.44, sig_mr=0.26,
+                          a_mp=0.3983, feh_mp=-2.02, sig_mp=0.34):
+    """Mock Sculptor with a KNOWN gamma and TWO GENUINELY DISCRETE stellar populations -- the
+    exact opposite of _continuous_gradient_mock. Each population is its own Plummer tracer
+    with its own isotropic DF in a COMMON gNFW potential, and draws [Fe/H] from its own
+    Gaussian; there is no gradient and no continuum.
+
+    Defaults match Sculptor's observed two-population structure as characterised by
+    Arroyo-Polonio et al. (2024, A&A 692, A195, Table C.2, corrected MLM):
+        metal-rich  f=0.34, <[Fe/H]>=-1.44, sigma_M=0.26, R_h=0.128 deg
+        metal-poor  f=0.66, <[Fe/H]>=-2.02, sigma_M=0.34, R_h=0.272 deg
+    Half-light radii are converted to kpc at D=83.9 kpc (1 deg = 1.4645 kpc); for a Plummer
+    profile the projected half-light radius equals the scale radius. Returns (R_proj, v_los, feh).
+    """
+    pot = agama.Potential(type='Spheroid', densityNorm=rhos, scaleRadius=rs,
+                          gamma=gamma_true, beta=3.0, alpha=1.0)
+    rng = np.random.default_rng(seed)
+    R_all, v_all, z_all = [], [], []
+    for frac, a0, mu, sd in ((f_mr, a_mr, feh_mr, sig_mr),
+                             (1.0 - f_mr, a_mp, feh_mp, sig_mp)):
+        npop = int(round(n * frac))
+        tr = agama.Density(type='Plummer', scaleRadius=a0, mass=1.0)
+        gm = agama.GalaxyModel(pot, agama.DistributionFunction(
+            type='QuasiSpherical', potential=pot, density=tr, beta0=0.0, r_a=1e6))
+        xv, _ = gm.sample(int(npop * 3.0)); x, y, _z, _vx, _vy, vz = xv.T
+        Rp = np.hypot(x, y)
+        ok = np.where(Rp < REGION_RMAX)[0]
+        idx = rng.choice(ok, min(npop, len(ok)), replace=False)
+        R_all.append(Rp[idx])
+        v_all.append(vz[idx] + rng.normal(0, 2.0, len(idx)))        # 2 km/s measurement error
+        z_all.append(rng.normal(mu, sd, len(idx)))                  # discrete Gaussian [Fe/H]
+    return np.concatenate(R_all), np.concatenate(v_all), np.concatenate(z_all)
+
+
+def run_reverse_bias_gate(gamma_true=(0.4, 1.0), n_real=40, out="figure_reverse_bias_gate.png"):
+    """
+    THE REVERSE GATE -- the necessary companion to run_bias_gate.
+
+    run_bias_gate asks: if the truth is CONTINUOUS, does splitting into two populations bias
+    gamma? (It does.) This asks the opposite and equally necessary question: if the truth is
+    genuinely TWO DISCRETE POPULATIONS -- as Arroyo-Polonio et al. (2024) and independent
+    photometric evidence indicate for Sculptor -- does a CONTINUOUS (no-split) treatment
+    still recover gamma?
+
+    Mocks are generated with two discrete populations matching Sculptor's observed structure
+    (AP24 Table C.2) in a common gNFW potential of known gamma. gamma is then recovered two
+    ways using posterior medians (short isotropic-gNFW sigma_los MCMC):
+      DISCRETE   -- split at the median [Fe/H]; the MATCHED model, i.e. the control;
+      CONTINUOUS -- all stars as one tracer; the TEST (deliberately misspecified here).
+
+    Interpretation: the continuous DF is misspecified against discrete truth -- it fits a
+    smooth trend through a genuine gap. The question is whether that misspecification in the
+    TRACER propagates into the POTENTIAL. It need not: both populations sample the same
+    potential. If the continuous bias is comparable to the discrete bias, the inferred slope
+    is robust to the population-decomposition choice in BOTH directions, and whether a given
+    dwarf is bimodal becomes irrelevant to the slope measurement.
+
+    Writes figure_reverse_bias_gate.png. (Mocks only; no network. For publication, raise
+    n_real.)
+    """
+    import matplotlib
+    try: matplotlib.use("Agg")
+    except Exception: pass
+    import matplotlib.pyplot as plt
+
+    print("=" * 64)
+    print("  REVERSE BIAS GATE: does a CONTINUOUS treatment recover gamma when the")
+    print("                     truth is TWO DISCRETE POPULATIONS? (AP24-matched mocks)")
+    print("=" * 64)
+    results = {}
+    for gt in gamma_true:
+        gd, gc = [], []
+        for s in range(n_real):
+            R, vlos, feh = _discrete_twopop_mock(gt, s)
+            med = np.median(feh); mp, mr = feh < med, feh >= med
+            pops = []
+            for sel in (mp, mr):
+                a = float(np.median(R[sel])); rc, so, se = _binprof(R[sel], vlos[sel])
+                pops.append((a, rc, so, se))
+            gd.append(_gnfw_gamma_posterior(pops, seed=s))
+            a = float(np.median(R)); rc, so, se = _binprof(R, vlos)
+            gc.append(_gnfw_gamma_posterior([(a, rc, so, se)], seed=s + 991))
+        gd, gc = np.array(gd), np.array(gc)
+        results[gt] = (gd, gc)
+        print(f"\n  gamma_true = {gt}:  ({n_real} realisations, DISCRETE truth)")
+        print(f"    DISCRETE  (2-pop split, matched): <gamma> = {gd.mean():.2f}  "
+              f"bias = {gd.mean()-gt:+.3f} +/- {gd.std()/np.sqrt(n_real):.3f}")
+        print(f"    CONTINUOUS (all stars, misspec.): <gamma> = {gc.mean():.2f}  "
+              f"bias = {gc.mean()-gt:+.3f} +/- {gc.std()/np.sqrt(n_real):.3f}")
+        dbias = abs(gc.mean() - gt) - abs(gd.mean() - gt)
+        verdict = ("CONTINUOUS ROBUST to discrete truth (bias comparable to the matched model)"
+                   if dbias < 0.05 else
+                   f"continuous carries EXTRA bias of {dbias:+.2f} under discrete truth -- report it")
+        print(f"    -> {verdict}")
+
+    fig, axes = plt.subplots(1, len(gamma_true), figsize=(6.2 * len(gamma_true), 4.6), squeeze=False)
+    for ax, gt in zip(axes[0], gamma_true):
+        gd, gc = results[gt]
+        bins = np.linspace(min(gd.min(), gc.min(), gt) - 0.1, max(gd.max(), gc.max(), gt) + 0.1, 22)
+        ax.hist(gd, bins, color='crimson', alpha=0.55,
+                label=f'discrete 2-pop, matched  (bias {gd.mean()-gt:+.2f})')
+        ax.hist(gc, bins, color='seagreen', alpha=0.55,
+                label=f'continuous, misspecified  (bias {gc.mean()-gt:+.2f})')
+        ax.axvline(gt, color='k', ls='--', lw=2, label=f'truth $\\gamma$={gt}')
+        ax.axvline(gd.mean(), color='crimson', lw=1.5); ax.axvline(gc.mean(), color='seagreen', lw=1.5)
+        ax.set_xlabel(r'recovered $\gamma$ (posterior median)'); ax.set_ylabel('realisations')
+        ax.set_title(f'$\\gamma_{{\\rm true}}={gt}$  (two discrete populations)'); ax.legend(fontsize=8)
+    fig.suptitle('Reverse gate: does a continuous treatment recover the slope when the '
+                 'truth is two discrete populations?', fontsize=12)
+    fig.tight_layout(); fig.savefig(out, dpi=150, bbox_inches='tight'); plt.close(fig)
+    print(f"\n--> Saved {out}")
+    return results
+
+
 def run_bias_vs_realizations(gamma_true=1.0, max_real=40, out="figure_bias_vs_realizations.png"):
     """
     Mean recovered-gamma bias as a function of the number of mock realisations, for the
@@ -4326,6 +4443,84 @@ def run_membership_robustness(pmem_cuts=(0.50, 0.70, 0.90, 0.95), nsteps=8000, n
     return rows
 
 
+def run_pop3_robustness(feh_cuts=(None, -3.00, -2.75, -2.50), nsteps=8000, nproc=None, out=None):
+    """
+    Very-metal-poor contamination test (AP24 'Pop 3').
+
+    Arroyo-Polonio et al. (2024, A&A 692, A195) identify a THIRD population in this exact
+    1339-star Sculptor sample: fraction ~0.018 (~24 stars), <[Fe/H]> ~ -2.90, spatially
+    extended (R_h ~ 1.1 deg), and offset by ~15 km/s in mean v_los (125.5 vs 111.2 km/s) --
+    most plausibly a recent minor merger. They EXCLUDE these stars from their velocity
+    dispersion profiles; the analysis here does not.
+
+    Why this matters for Gamma: those stars are metal-poor AND at large radius, so they fall
+    into the metal-poor subcomponent, inflate its velocity dispersion, inflate M(r_h,MP),
+    increase Delta log M, and therefore bias Gamma HIGH -- i.e. TOWARD A CORE. The systematic
+    works in favour of this paper's result, which is exactly why it must be reported.
+
+    Refits the WP11 mass slope with progressively stricter very-metal-poor cuts and reports
+    the shift. A small |Delta Gamma| means the core-like slope is not driven by the merger
+    debris. Writes figure_pop3_robustness.png.
+    """
+    out = _gf(out or "figure_pop3_robustness.png")
+    import matplotlib
+    try: matplotlib.use("Agg")
+    except Exception: pass
+    import matplotlib.pyplot as plt
+
+    if GAL['name'].lower() != 'sculptor':
+        print(f"  [pop3] NOTE: {GAL['name']}'s metallicity indicator is not [Fe/H]; "
+              f"the AP24 Pop-3 cut is Sculptor-specific and will not be meaningful here.")
+
+    print("=" * 64)
+    print(f"  VERY-METAL-POOR CONTAMINATION  ({GAL['name']}; Gamma vs [Fe/H] floor)")
+    print(f"  AP24 Pop 3: ~1.8% of stars, <[Fe/H]>~-2.90, v_los offset ~+15 km/s")
+    print("=" * 64)
+    base = wp11_load_data()
+    feh = base['feh']
+    rows = []
+    for cut in feh_cuts:
+        keep = np.ones(len(feh), bool) if cut is None else (feh >= cut)
+        n_removed = int((~keep).sum())
+        if keep.sum() < 50:
+            continue
+        data = {k: (v[keep] if hasattr(v, '__len__') and len(v) == len(feh) else v)
+                for k, v in base.items()}
+        g16, g50, g84 = _wp11_fit_gamma(data, nsteps=nsteps, nproc=nproc)
+        label = "all stars" if cut is None else f"[Fe/H] >= {cut:.2f}"
+        rows.append((cut, int(keep.sum()), n_removed, g50, g16, g84))
+        print(f"    {label:18s}: N={int(keep.sum()):4d} (-{n_removed:3d})   "
+              f"Gamma = {g50:.2f} (+{g84-g50:.2f}/-{g50-g16:.2f})")
+
+    g_base = rows[0][3]
+    xs = np.arange(len(rows))
+    g50 = np.array([r[3] for r in rows]); glo = np.array([r[4] for r in rows])
+    ghi = np.array([r[5] for r in rows])
+    labels = ["all\nstars" if r[0] is None else f"$\\geq${r[0]:.2f}" for r in rows]
+
+    fig, ax = plt.subplots(figsize=(8, 5.2))
+    ax.errorbar(xs, g50, yerr=np.vstack([g50 - glo, ghi - g50]), fmt='o-', color='darkgreen',
+                capsize=4, lw=1.8, label=r'WP11 $\Gamma$ (68% CI)')
+    ax.axhline(2.0, color='k', ls=':', lw=1.3, label=r'NFW cusp ($\Gamma=2$)')
+    ax.axhline(g_base, color='darkgreen', ls='--', lw=1.0, alpha=0.6,
+               label=r'$\Gamma$ (all stars)')
+    for x, r in zip(xs, rows):
+        ax.annotate(f'N={r[1]}', (x, r[3]), textcoords='offset points', xytext=(0, 11),
+                    fontsize=8, ha='center')
+    ax.set_xticks(xs); ax.set_xticklabels(labels)
+    ax.set_xlabel(r'very-metal-poor floor applied to the sample')
+    ax.set_ylabel(r'mass-profile slope $\Gamma$')
+    ax.set_title(f"{GAL['name']}: is the slope driven by very-metal-poor (AP24 Pop 3) stars?")
+    ax.legend(fontsize=9); ax.grid(alpha=0.3)
+    fig.tight_layout(); fig.savefig(out, dpi=150, bbox_inches='tight'); plt.close(fig)
+    print(f"\n--> Saved {out}")
+    dmax = float(np.max(np.abs(g50 - g_base)))
+    print(f"  max |Delta Gamma| vs all-stars = {dmax:.2f} "
+          f"({'ROBUST' if dmax < 0.3 else 'sensitive -- report the shift explicitly'})")
+    print(f"  (expected direction: removing Pop 3 should LOWER Gamma, i.e. away from a core)")
+    return rows
+
+
 def run_wp11(nwalkers=64, nsteps=6000, nproc=None, backend="wp11.h5", resume=None,
              use_mock=False, feh_quality_keep=None, catalog=None):
     """
@@ -4493,6 +4688,19 @@ if __name__ == "__main__":
                      help="Bias gate on continuous-gradient mocks: recover gamma with a "
                           "discrete median split vs a continuous (all-star) treatment, and "
                           "measure the split-induced bias. Writes figure_bias_gate.png.")
+    _ap.add_argument("--revgate", action="store_true",
+                     help="REVERSE bias gate: mocks with two GENUINELY DISCRETE populations "
+                          "matching Sculptor's observed structure (Arroyo-Polonio et al. 2024 "
+                          "Table C.2); tests whether a continuous (no-split) treatment still "
+                          "recovers gamma. The companion to --biasgate: together they test the "
+                          "population-decomposition choice in BOTH directions. Writes "
+                          "figure_reverse_bias_gate.png.")
+    _ap.add_argument("--pop3", action="store_true",
+                     help="Very-metal-poor contamination test: refit WP11 Gamma with "
+                          "progressively stricter [Fe/H] floors to check whether the slope is "
+                          "driven by the ~24 offset stars Arroyo-Polonio et al. (2024) identify "
+                          "as a third population / probable minor merger. Writes "
+                          "figure_pop3_robustness.png.")
     _ap.add_argument("--overview", action="store_true",
                      help="Generate the data-overview figure (histograms + scatter of the "
                           "real Tolstoy+2023 sample) and exit.")
@@ -4577,6 +4785,14 @@ if __name__ == "__main__":
 
     if _args.biasgate:                                # bias gate on mocks, then exit
         run_bias_gate()
+        sys.exit(0)
+
+    if _args.revgate:                                 # reverse bias gate on mocks, then exit
+        run_reverse_bias_gate()
+        sys.exit(0)
+
+    if _args.pop3:                                    # very-metal-poor contamination, then exit
+        run_pop3_robustness(nproc=(_args.nproc or None))
         sys.exit(0)
 
     if _args.crosscheck:                              # GravSphere cross-check, then exit
