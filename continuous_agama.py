@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 # =============================================================================
 #  Constraining the Inner Dark-Matter Slope of Sculptor:
-#  A Comparative Analysis of Spherical Jeans, GravSphere, and Action-Based
-#  Chemo-Dynamical Modeling
+#  A Comparative Analysis of Four Dynamical Methods
 #
 #  Author:  Rishi Sanjeev, The Charter School of Wilmington
 #  Contact: rishsanjeev@gmail.com
