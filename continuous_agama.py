@@ -43,6 +43,7 @@ Command line:
 """
 
 import os
+import time
 os.environ.setdefault("OMP_NUM_THREADS", "1")      # 1 thread/process: avoid oversubscription
 os.environ.setdefault("AGAMA_VERBOSITY", "0")       # quiet AGAMA's per-model progress bars
 import urllib.request
@@ -51,6 +52,12 @@ import pandas as pd
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+# Mentor's note: all figure text >= 12pt. Set once, globally, rather than per-figure.
+plt.rcParams.update({
+    'font.size': 12, 'axes.titlesize': 12, 'axes.labelsize': 13,
+    'xtick.labelsize': 12, 'ytick.labelsize': 12, 'legend.fontsize': 12,
+    'figure.titlesize': 14,
+})
 from scipy.optimize import minimize
 from scipy.stats import multivariate_normal
 
@@ -104,8 +111,12 @@ DISTANCE_KPC = 84.0           # Martínez-Vázquez et al. (2015); adopted by Arr
 KAPPA        = 4.74047        # km/s per (mas/yr × kpc)
 
 # Sculptor systemic PM — Gaia eDR3 (McConnachie & Venn 2020)
-SCULPTOR_PMRA_SYS  =  0.085   # mas/yr
-SCULPTOR_PMDEC_SYS = -0.133   # mas/yr
+SCULPTOR_PMRA_SYS  =  0.100   # mas/yr
+SCULPTOR_PMDEC_SYS = -0.147   # mas/yr
+# Battaglia et al. (2022, A&A 657, A54): Table B.2 raw systemic PM (0.099, -0.159) minus
+# Table B.4 QSO zero-point (-0.001, -0.012), subtracted per their stated procedure (Sect. 5).
+# Verified to 3 decimal places against the independently-published, already-corrected value
+# (0.100, -0.147) adopted from the same source by the Sculptor Paper II (A&A, 2025) lineage.
 # [FIX-E] sigma_v~9 km/s → 9/(4.74047×84) = 0.0226 mas/yr.
 # Previous value 0.05 mas/yr was ~2.3× too large.
 SCULPTOR_PM_SIGMA  =  0.0226  # mas/yr  (Massari et al. 2020)
@@ -115,14 +126,17 @@ FINAL_JOINT_MEMBERSHIP_MIN = 0.75
 
 # ── Phase-4 (action-DF) parameters, from Arroyo-Polonio et al. (2025) ─────────
 G_KPC   = 4.300917e-6   # kpc (km/s)^2 / Msun
-# Metal-rich/metal-poor Plummer tracer scales, seeded from Walker & Penarrubia (2011,
-# ApJ 742, 20) Table 4 free-MCMC-fitted half-light radii for Sculptor: r_h,1 (metal-rich)
-# = 167 pc, r_h,2 (metal-poor) = 302 pc. NOT from Zhu et al. (2016), who report only a
-# single combined half-light radius for Sculptor (0.26 kpc) and do not independently
-# measure the two-population split.
-RE_MR   = 0.167         # kpc, metal-rich Plummer scale (WP11 Table 4, r_h,1)
-RE_MP   = 0.302         # kpc, metal-poor Plummer scale (WP11 Table 4, r_h,2)
-FRAC_MR = 0.35          # MR fraction of members
+# Metal-rich/metal-poor Plummer tracer scales, from Arroyo-Polonio et al. (2024, A&A 692,
+# A195) Table C.2 -- the population decomposition of Paper I in the AP25 lineage that this
+# phase benchmarks against. R_h = 0.128 deg and 0.272 deg converted at D = 83.9 kpc
+# (1 deg = 1.4645 kpc); for a Plummer profile the projected half-light radius equals the
+# scale radius. NOTE: these were briefly set to WP11 Table 4 values (0.167, 0.302), which
+# was the wrong lineage -- they are used ONLY by run_action_df_modeling, which compares to
+# AP25, so AP24's own decomposition is the consistent source. WP11's fitted radii belong
+# with the WP11 estimator, which does not read these constants.
+RE_MR   = 0.1875        # kpc, metal-rich Plummer scale (AP24 Table C.2)
+RE_MP   = 0.3983        # kpc, metal-poor Plummer scale (AP24 Table C.2)
+FRAC_MR = 0.34          # MR fraction of members (AP24 Table C.2)
 V_SYS   = 111.2         # km/s systemic (AP24)
 BETA_DM = 3.0           # default gNFW outer slope for the FAST (3-param) MLE only
 
@@ -142,7 +156,8 @@ GALAXIES = {
         # e and D follow Munoz et al. (2018) / Martinez-Vazquez et al. (2015) as tabulated by
         # Arroyo-Polonio et al. (2024, A&A 692, A195, Table 1), who analyse this same sample.
         distance_kpc=83.9, v_sys=111.2, ellipticity=0.33, pa_deg=92.0,
-        re_mr=0.167, re_mp=0.302,       # tracer Plummer scales (kpc); WP11 Table 4 r_h,1/r_h,2
+        re_mr=0.1875, re_mp=0.3983,     # tracer Plummer scales (kpc); AP24 Table C.2
+        frac_mr=0.34,                   # MR fraction; AP24 Table C.2 (same source as above)
         catalog='J/A+A/675/A49', cols=None,              # Tolstoy+2023 ([Fe/H] auto-detected)
         feh_quality_keep=(0,), mem_keep=('m',),
         wp11_xlim=(2.0, 2.75), wp11_ylim=(6.3, 7.9)),    # WP11 Fig.10 panel range (log10)
@@ -151,6 +166,8 @@ GALAXIES = {
         center_ra=39.9971, center_dec=-34.4492,          # Munoz+2018 centre
         distance_kpc=147.0, v_sys=55.3, ellipticity=0.30, pa_deg=41.9,
         re_mr=0.60, re_mp=0.90,                          # larger tracer scales (kpc)
+        frac_mr=0.60,        # WP11 Table 4 f_sub for Fornax (was silently inheriting Sculptor's
+                             # 0.35 before set_galaxy reset FRAC_MR -- see below)
         catalog='J/AJ/137/3100',                         # Walker+2009 MMFS (Fornax)
         # first (averaged, one row per star) table: <HV> velocity, <SigMg> Mg index as the
         # metallicity separator. Column names carry angle brackets in VizieR.
@@ -180,7 +197,7 @@ def _gf(name):
 def set_galaxy(name):
     """Switch the active galaxy; reassigns the geometric/kinematic module constants so all
     loaders pick up the new target. Returns the galaxy parameter dict."""
-    global GAL, V_SYS, DISTANCE_KPC, RA0_DEG, DEC0_DEG, RE_MR, RE_MP
+    global GAL, V_SYS, DISTANCE_KPC, RA0_DEG, DEC0_DEG, RE_MR, RE_MP, FRAC_MR
     key = name.strip().lower()
     if key not in GALAXIES:
         raise ValueError(f"unknown galaxy '{name}'; choose from {list(GALAXIES)}")
@@ -188,8 +205,10 @@ def set_galaxy(name):
     V_SYS = GAL['v_sys']; DISTANCE_KPC = GAL['distance_kpc']
     RA0_DEG = GAL['ra0']; DEC0_DEG = GAL['dec0']
     RE_MR = GAL['re_mr']; RE_MP = GAL['re_mp']
+    FRAC_MR = GAL['frac_mr']    # was previously NOT reset: switching to Fornax silently kept
+                                # Sculptor's 0.35 MR fraction (reported by mentor, 2026-07)
     print(f"  [galaxy] target = {GAL['name']}: D={DISTANCE_KPC} kpc, V_sys={V_SYS} km/s, "
-          f"e={GAL['ellipticity']}, catalog={GAL['catalog']}")
+          f"e={GAL['ellipticity']}, f_MR={FRAC_MR}, catalog={GAL['catalog']}")
     return GAL
 # Paper Eq.4 truncation (fixed, as in Arroyo-Polonio+25): rho ~ ...*exp[-(r/r_cut)^xi]
 DM_RCUT = 20.0          # kpc  (~10x the outermost star; negligible inner effect)
@@ -291,26 +310,35 @@ def bootstrap_dispersion_error(v, e, n_boot=200, seed=42):
 def error_aware_gmm_likelihood(params, PM, PM_err, PM_corr):
     """
     Two-component Gaussian mixture with per-star heteroscedastic correlated errors.
-    Full 2×2 measurement covariance S_i includes the Gaia pmra_pmdec_corr term.
+    Full 2x2 measurement covariance S_i includes the Gaia pmra_pmdec_corr term.
+
+    Vectorized: evaluates all stars at once via the closed-form 2x2 bivariate-normal PDF,
+    rather than looping in Python and calling scipy.stats.multivariate_normal.pdf per star.
+    Mathematically identical result to the original loop; the loop version made repeated
+    multi-start fits (needed to check for local-optimum convergence issues) impractically
+    slow -- a single 1604-star, 9-parameter Nelder-Mead fit needs many thousands of
+    likelihood evaluations, each of which was paying full scipy per-call overhead x2 x1604.
     """
     mu_s_x, mu_s_y, sig_s_x, sig_s_y, mu_f_x, mu_f_y, sig_f_x, sig_f_y, w_s = params
     if not (0.0 < w_s < 1.0) or any(s <= 0 for s in [sig_s_x, sig_s_y, sig_f_x, sig_f_y]):
         return np.inf
 
-    total_nll = 0.0
-    for i in range(len(PM)):
-        rho = PM_corr[i]
-        S_i = np.array([
-            [PM_err[i, 0]**2,                      rho * PM_err[i, 0] * PM_err[i, 1]],
-            [rho * PM_err[i, 0] * PM_err[i, 1],    PM_err[i, 1]**2                  ]
-        ])
-        Cov_S = np.diag([sig_s_x**2, sig_s_y**2]) + S_i
-        L_S   = multivariate_normal.pdf(PM[i], mean=[mu_s_x, mu_s_y], cov=Cov_S)
-        Cov_F = np.diag([sig_f_x**2, sig_f_y**2]) + S_i
-        L_F   = multivariate_normal.pdf(PM[i], mean=[mu_f_x, mu_f_y], cov=Cov_F)
-        total_nll -= np.log(max(w_s * L_S + (1.0 - w_s) * L_F, 1e-300))
+    ex2 = PM_err[:, 0] ** 2
+    ey2 = PM_err[:, 1] ** 2
+    exy = PM_corr * PM_err[:, 0] * PM_err[:, 1]     # off-diagonal of S_i (unchanged by adding
+                                                      # a diagonal population-sigma matrix)
 
-    return total_nll
+    def _biv_pdf(mu_x, mu_y, sig_x2, sig_y2):
+        a = sig_x2 + ex2; c = sig_y2 + ey2; b = exy
+        det = a * c - b ** 2
+        dx = PM[:, 0] - mu_x; dy = PM[:, 1] - mu_y
+        quad = (c * dx ** 2 - 2.0 * b * dx * dy + a * dy ** 2) / det
+        return np.exp(-0.5 * quad) / (2.0 * np.pi * np.sqrt(det))
+
+    L_S = _biv_pdf(mu_s_x, mu_s_y, sig_s_x ** 2, sig_s_y ** 2)
+    L_F = _biv_pdf(mu_f_x, mu_f_y, sig_f_x ** 2, sig_f_y ** 2)
+    mix = w_s * L_S + (1.0 - w_s) * L_F
+    return -np.sum(np.log(np.maximum(mix, 1e-300)))
 
 
 # ============================================================
@@ -428,7 +456,30 @@ def fetch_gaia_with_epoch_correction(walker_df, walker_coords):
     AND pmra IS NOT NULL AND pmdec IS NOT NULL
     AND ruwe < 1.4
     """
-    gaia_data = Gaia.launch_job_async(query).get_results()
+    # The async endpoint (launch_job_async) occasionally 500s at the RESULT-RETRIEVAL step
+    # after the job itself has already completed server-side -- a known intermittent fault
+    # on ESA's Gaia TAP+ storage backend, not a query or code error. Retry a couple of times
+    # first (cheap; often transient), then fall back to the synchronous endpoint, which does
+    # not depend on that storage/retrieval step at all. Sync jobs default to a 2000-row cap,
+    # so ROW_LIMIT is raised explicitly to match this query's own TOP 300000 and restored
+    # afterward so it doesn't silently affect any other Gaia call elsewhere in the pipeline.
+    gaia_data = None
+    for attempt in range(3):
+        try:
+            gaia_data = Gaia.launch_job_async(query).get_results()
+            break
+        except Exception as exc:
+            print(f"  [Gaia async attempt {attempt+1}/3 failed: {str(exc)[:80]}]")
+            if attempt < 2:
+                time.sleep(5)
+    if gaia_data is None:
+        print("  [Gaia async endpoint unavailable after 3 attempts; falling back to sync]")
+        _row_limit_orig = Gaia.ROW_LIMIT
+        try:
+            Gaia.ROW_LIMIT = 300000
+            gaia_data = Gaia.launch_job(query).get_results()
+        finally:
+            Gaia.ROW_LIMIT = _row_limit_orig
     print(f"  --> {len(gaia_data)} Gaia sources after RUWE < 1.4 filter.")
 
     gaia_coords_2016 = SkyCoord(
@@ -476,41 +527,128 @@ def calculate_error_aware_membership(df):
           2.0, 2.0,
           0.30]
 
-    res = minimize(
-        error_aware_gmm_likelihood, x0,
-        args=(PM, PM_err, PM_corr),
-        method='Nelder-Mead',
-        options={'xatol': 1e-5, 'fatol': 1e-5, 'maxiter': 20000}
-    )
+    # Single-start Nelder-Mead previously converged with w_s (member weight) within ~1e-7 of
+    # the upper boundary for every star in this sample -- functionally "no foreground",
+    # observed 2026-07-24. That guard clause in error_aware_gmm_likelihood (0 < w_s < 1)
+    # means it never got there as a hard-coded 1.0, but a single start can't distinguish a
+    # genuine result (this sample really has no separable foreground left, since it is
+    # already Tolstoy_I's spectroscopically-confirmed member list, and this is an
+    # error-aware model where large individual PM_err can legitimately explain apparent
+    # outliers as noise rather than true foreground) from a bad local optimum. Multi-start
+    # is standard practice for mixture-model likelihoods for exactly this reason.
+    w_s_starts = [0.10, 0.30, 0.50, 0.70, 0.90]
+    best_res, best_nll, w_s_results = None, np.inf, []
+    for w0 in w_s_starts:
+        x0_i = list(x0); x0_i[8] = w0
+        res_i = minimize(
+            error_aware_gmm_likelihood, x0_i,
+            args=(PM, PM_err, PM_corr),
+            method='Nelder-Mead',
+            options={'xatol': 1e-5, 'fatol': 1e-5, 'maxiter': 20000}
+        )
+        nll_i = res_i.fun if res_i.success else np.inf
+        w_s_results.append(res_i.x[8] if res_i.success else np.nan)
+        print(f"  [GMM multi-start] w_s0={w0:.2f} -> w_s={res_i.x[8]:.6f}  "
+              f"NLL={nll_i:.2f}  success={res_i.success}")
+        if nll_i < best_nll:
+            best_nll, best_res = nll_i, res_i
+    res = best_res
+    valid = [w for w in w_s_results if not np.isnan(w)]
+    agree = len(valid) > 1 and (max(valid) - min(valid)) < 0.05
+    print(f"  [GMM multi-start] best: w_s={res.x[8]:.6f}, NLL={best_nll:.2f}  -- "
+          f"{'all starts agree -> likely a genuine result, not a stuck optimizer' if agree else 'starts DISAGREE -> the single-start fit was likely stuck at a local optimum; the best (lowest-NLL) result above is being used'}")
 
+    # Decisive test: the unbounded fit's foreground sigma inflated to (3.99, 9.52) mas/yr --
+    # a 2D Gaussian's peak density scales as 1/(sigma_x*sigma_y), so an inflating foreground
+    # component can "win" by making its own likelihood negligible everywhere, letting w_s->1
+    # by default regardless of whether a real, tighter foreground population exists. Capping
+    # sigma_f at a physically reasonable ceiling removes that escape route. [NOTE: 3.0 mas/yr
+    # is a reasonable-but-unverified ceiling for this field's expected MW foreground PM
+    # dispersion -- worth checking against a literature value for Sculptor's line of sight
+    # before treating this as final, but it is a principled, not arbitrary, choice.]
+    bounds = [(SCULPTOR_PMRA_SYS - 0.5, SCULPTOR_PMRA_SYS + 0.5),
+              (SCULPTOR_PMDEC_SYS - 0.5, SCULPTOR_PMDEC_SYS + 0.5),
+              (0.001, 0.5), (0.001, 0.5),
+              (-10.0, 10.0), (-10.0, 10.0),
+              (0.05, 3.0), (0.05, 3.0),
+              (0.001, 0.999)]
+    best_res_b, best_nll_b = None, np.inf
+    for w0 in w_s_starts:
+        x0_i = list(x0); x0_i[8] = w0
+        res_i = minimize(
+            error_aware_gmm_likelihood, x0_i,
+            args=(PM, PM_err, PM_corr),
+            method='Nelder-Mead', bounds=bounds,
+            options={'xatol': 1e-5, 'fatol': 1e-5, 'maxiter': 20000}
+        )
+        nll_i = res_i.fun if res_i.success else np.inf
+        print(f"  [GMM bounded-sigma_f<=3.0] w_s0={w0:.2f} -> w_s={res_i.x[8]:.6f}  "
+              f"sigma_f=({res_i.x[6]:.3f},{res_i.x[7]:.3f})  NLL={nll_i:.2f}")
+        if nll_i < best_nll_b:
+            best_nll_b, best_res_b = nll_i, res_i
+    pb = best_res_b.x
+    print(f"  [GMM bounded] best: w_s={pb[8]:.6f}, sigma_f=({pb[6]:.3f},{pb[7]:.3f}), "
+          f"NLL={best_nll_b:.2f}")
+    # Check pinning at EITHER bound. An earlier version tested only the upper bound, so a fit
+    # sitting at the sigma_f floor (0.05) was reported as having "settled well below its bound"
+    # -- the opposite of what was happening.
+    _lo, _hi = 0.05, 3.0
+    _at_hi = (pb[6] > 0.95 * _hi) or (pb[7] > 0.95 * _hi)
+    _at_lo = (pb[6] < 1.05 * _lo) or (pb[7] < 1.05 * _lo)
+    if pb[8] > 0.995 and _at_hi:
+        print("  [GMM bounded] w_s pinned near 1 with sigma_f against its UPPER bound -> the "
+              "foreground component is still trying to inflate its way to irrelevance. "
+              "Variance-inflation degeneracy, not a converged fit.")
+    elif pb[8] > 0.995 and _at_lo:
+        print("  [GMM bounded] w_s pinned near 1 with sigma_f against its LOWER bound -> the "
+              "foreground has collapsed toward zero width instead. This is the mirror-image "
+              "degeneracy: capping sigma_f from above relocated the pathology rather than "
+              "removing it. The mixture is not identified on this sample.")
+    elif pb[8] > 0.995:
+        print("  [GMM bounded] w_s still ~1 but sigma_f settled away from both bounds -> "
+              "supports a genuine near-total-membership result, not a boundary artifact.")
+    else:
+        print("  [GMM bounded] w_s moved substantially away from 1 once sigma_f was capped "
+              "-> the earlier unbounded result WAS a variance-inflation artifact. This bounded "
+              "fit (or a properly justified bound) should replace the unbounded one.")
+
+    # NOTE: a non-convergence fallback previously lived here, substituting a chi-squared
+    # pseudo-membership for the GMM posterior under the same column name (P_mem_PM). Removed:
+    # a silent substitution of a different calculation is worse than a crash, because nothing
+    # downstream can tell which one produced the numbers. If the fit fails, that is a real
+    # condition the caller needs to see.
     if not res.success:
-        print("  --> Warning: GMM did not converge. Using error-convolved fallback.")
-        # [FIX-D] Individual measurement errors included in chi-squared denominator.
-        # Without this, stars with large Gaia PM uncertainties are incorrectly
-        # penalised even when consistent with Sculptor's systemic PM within their errors.
-        sig2_ra  = SCULPTOR_PM_SIGMA**2 + PM_err[:, 0]**2
-        sig2_dec = SCULPTOR_PM_SIGMA**2 + PM_err[:, 1]**2
-        chi2 = ((PM[:, 0] - SCULPTOR_PMRA_SYS)**2  / sig2_ra +
-                (PM[:, 1] - SCULPTOR_PMDEC_SYS)**2 / sig2_dec)
-        L_S  = np.exp(-0.5 * chi2)
-        L_F  = 0.40  # rough flat foreground fraction
-        df   = df.copy()
-        df["P_mem_PM"] = L_S / (L_S + L_F + 1e-300)
+        raise RuntimeError(
+            "Error-aware GMM failed to converge from any starting point. No fallback is "
+            "applied: the substitute calculation used previously is not equivalent to the "
+            "GMM posterior. Inspect the multi-start diagnostics printed above.")
     else:
         p = res.x
-        p_mem_pm = []
-        for i in range(len(PM)):
-            rho = PM_corr[i]
-            S_i = np.array([
-                [PM_err[i,0]**2,                   rho*PM_err[i,0]*PM_err[i,1]],
-                [rho*PM_err[i,0]*PM_err[i,1],      PM_err[i,1]**2             ]
-            ])
-            L_S  = multivariate_normal.pdf(PM[i], mean=[p[0], p[1]],
-                                           cov=np.diag([p[2]**2, p[3]**2]) + S_i)
-            L_F  = multivariate_normal.pdf(PM[i], mean=[p[4], p[5]],
-                                           cov=np.diag([p[6]**2, p[7]**2]) + S_i)
-            prob = (p[8] * L_S) / (p[8] * L_S + (1.0 - p[8]) * L_F + 1e-300)
-            p_mem_pm.append(prob)
+        # DIAGNOSTIC: every star coming back at P_mem_PM ~ 1.0 (observed 2026-07-24, std
+        # ~3.7e-13) points at a degenerate fit -- most likely the foreground component's
+        # covariance has blown up (or its weight collapsed near 0), driving L_F ~ 0
+        # everywhere. Nelder-Mead can report success=True at exactly this kind of
+        # pathological optimum. Printing the converged parameters to confirm which one
+        # degenerated before changing anything numerically.
+        print(f"  [GMM diagnostic] signal   mean=({p[0]:+.4f},{p[1]:+.4f}) sigma=({p[2]:.4f},{p[3]:.4f})")
+        print(f"  [GMM diagnostic] foreground mean=({p[4]:+.4f},{p[5]:+.4f}) sigma=({p[6]:.4f},{p[7]:.4f})")
+        print(f"  [GMM diagnostic] member weight p8={p[8]:.6f}  (1-p8={1-p[8]:.6f})")
+        if p[8] > 0.999 or p[6] > 20 or p[7] > 20:
+            print("  [GMM diagnostic] *** LOOKS DEGENERATE: member weight ~1 and/or "
+                  "foreground sigma implausibly large -- foreground likelihood is being "
+                  "driven to ~0 everywhere, so every star gets P_mem_PM ~= 1 regardless "
+                  "of its actual PM. ***")
+        ex2 = PM_err[:, 0] ** 2; ey2 = PM_err[:, 1] ** 2
+        exy = PM_corr * PM_err[:, 0] * PM_err[:, 1]
+        def _biv_pdf(mu_x, mu_y, sig_x2, sig_y2):
+            a = sig_x2 + ex2; c = sig_y2 + ey2; b = exy
+            det = a * c - b ** 2
+            dx = PM[:, 0] - mu_x; dy = PM[:, 1] - mu_y
+            quad = (c * dx ** 2 - 2.0 * b * dx * dy + a * dy ** 2) / det
+            return np.exp(-0.5 * quad) / (2.0 * np.pi * np.sqrt(det))
+        L_S = _biv_pdf(p[0], p[1], p[2] ** 2, p[3] ** 2)
+        L_F = _biv_pdf(p[4], p[5], p[6] ** 2, p[7] ** 2)
+        p_mem_pm = (p[8] * L_S) / (p[8] * L_S + (1.0 - p[8]) * L_F + 1e-300)
         df   = df.copy()
         df["P_mem_PM"] = p_mem_pm
 
@@ -976,13 +1114,51 @@ def agama_lnprob_jeans(theta, pops):
             sig = np.sqrt(gm.moments(np.column_stack([rc, np.zeros_like(rc)]),
                                      dens=False, vel2=True)[:, 2])
             chi2 += np.sum(((so - sig) / se) ** 2)
+        if not np.isfinite(chi2):
+            _lnprob_failure("non-finite chi2", theta)
+            return -np.inf
         return -0.5 * chi2
-    except Exception:
+    except Exception as exc:
+        # A blanket silent `return -np.inf` previously lived here. That is dangerous in a
+        # likelihood: if AGAMA fails SYSTEMATICALLY in some region of parameter space (e.g.
+        # Eddington inversion failing for a particular gamma range), that region is silently
+        # assigned zero probability and the posterior is sculpted by numerical failure rather
+        # than by the data -- invisibly. Rejection is still the right action (the sampler
+        # needs a finite return), but it is now recorded, and a summary is printed at the end
+        # of the run so a systematic pattern cannot pass unnoticed.
+        _lnprob_failure(type(exc).__name__ + ": " + str(exc)[:60], theta)
         return -np.inf
 
 
+# Failure bookkeeping for agama_lnprob_jeans. Each distinct message is reported once when it
+# first occurs, with the parameter vector that triggered it; counts are tallied for the
+# end-of-run summary (see _lnprob_failure_report).
+_LNPROB_FAILURES = {}
+
+def _lnprob_failure(msg, theta):
+    if msg not in _LNPROB_FAILURES:
+        _LNPROB_FAILURES[msg] = 0
+        print(f"    [lnprob] first rejection -- {msg}  at gamma={theta[0]:.3f}, "
+              f"log_rs={theta[1]:.3f}, logM={theta[2]:.3f}")
+    _LNPROB_FAILURES[msg] += 1
+
+def _lnprob_failure_report():
+    """Print a summary of likelihood-evaluation failures, if any occurred."""
+    if not _LNPROB_FAILURES:
+        return
+    total = sum(_LNPROB_FAILURES.values())
+    print(f"  [lnprob] {total} likelihood evaluations were rejected on error:")
+    for msg, n in sorted(_LNPROB_FAILURES.items(), key=lambda kv: -kv[1]):
+        print(f"      {n:8d}  {msg}")
+    print("  [lnprob] If this count is large or concentrated, the posterior may be shaped by "
+          "numerical failure rather than by the data -- inspect before trusting the result.")
+    print("  [lnprob] NOTE: with nproc > 1 each worker keeps its own tally, so this count is a "
+          "LOWER BOUND (it reflects the parent process only). The per-worker first-occurrence "
+          "messages above are printed live and are the reliable signal.")
+
+
 def run_dm5_chain(nwalkers=24, nsteps=4000, nproc=None, backend="dm5.h5", resume=None,
-                  nbins=6, feh_quality_keep=None, catalog=None):
+                  nbins=6, feh_quality_keep=None, catalog=None, seed=42):
     """Robust MCMC of Sculptor's DM inner slope on the real Tolstoy+2023 data.
 
     Fits a generalised-NFW profile (3 free parameters: gamma, log10 r_s, log10 M_DM;
@@ -1020,7 +1196,9 @@ def run_dm5_chain(nwalkers=24, nsteps=4000, nproc=None, backend="dm5.h5", resume
           "(fitting gNFW: alpha=1, eta=3, r_a=1.5 fixed)")
 
     ndim = 3; nw = max(nwalkers, 2 * ndim + 2)
-    rng = np.random.default_rng(42)
+    rng = np.random.default_rng(seed)          # configurable: on a likelihood this flat in gamma,
+                                               # where the walkers start can determine where the
+                                               # ensemble settles. Vary to test seed stability.
     lo = np.array([0.02, -2.9, 7.2]); hi = np.array([1.88, 0.9, 10.8])
     p0 = np.clip(init + np.array([0.05, 0.05, 0.10]) * rng.standard_normal((nw, ndim)), lo, hi)
     moves = [(emcee.moves.DEMove(), 0.8), (emcee.moves.DESnookerMove(), 0.2)]
@@ -1043,6 +1221,7 @@ def run_dm5_chain(nwalkers=24, nsteps=4000, nproc=None, backend="dm5.h5", resume
 
     labels = [r'$\gamma$', r'$\log_{10}r_s$', r'$\log_{10}M_{\rm DM}$']
     rep = mcmc_convergence_report(s, labels)
+    _lnprob_failure_report()
     flat = s.get_chain(discard=rep['burn'], thin=rep['thin'], flat=True)
     if len(flat) < 50:
         flat = s.get_chain(discard=max(1, s.iteration // 3), flat=True)
@@ -1118,7 +1297,7 @@ def agama_lnprob(theta, R, vlos, verr, w_mr):
     return agama_lnlike_perstar(theta, R, vlos, verr, w_mr)
 
 
-def agama_run_mcmc(R, vlos, verr, init, w_mr=FRAC_MR, nwalkers=32, nsteps=3000,
+def agama_run_mcmc(R, vlos, verr, init, w_mr=None, nwalkers=32, nsteps=3000,
                    nsub=None, nproc=1, backend_file=None, resume=False,
                    progress=False, seed=42):
     """
@@ -1142,6 +1321,12 @@ def agama_run_mcmc(R, vlos, verr, init, w_mr=FRAC_MR, nwalkers=32, nsteps=3000,
 
     For a real run: nwalkers=32, nsteps>=3000, nsub=None, nproc=os.cpu_count().
     """
+    # w_mr defaults to the ACTIVE galaxy's MR fraction, resolved at call time. Previously this
+    # was `w_mr=FRAC_MR` in the signature, which Python evaluates once at import -- so it stayed
+    # at Sculptor's value even after set_galaxy() switched targets, independently of the
+    # set_galaxy reset bug.
+    if w_mr is None:
+        w_mr = FRAC_MR
     rng = np.random.default_rng(seed)
     if nsub is not None and nsub < len(R):
         idx = rng.choice(len(R), nsub, replace=False)
@@ -1566,9 +1751,6 @@ def run_action_df_modeling(high_fidelity=False, mcmc_nwalkers=32, mcmc_nsteps=30
     axD.legend(fontsize=7.5, loc='lower right'); axD.grid(alpha=0.2, which='both')
 
     mode = 'per-star MCMC' if chain is not None else 'MLE'
-    plt.suptitle(f'Arroyo-Polonio+25 action-DF modeling (AGAMA, {mode}) — '
-                 + ('real data' if used_real else 'mock recovery'),
-                 fontsize=12, y=1.00)
     plt.tight_layout()
     plt.savefig("figure4_action_df_modeling.png", dpi=200, bbox_inches='tight')
     print("--> Saved figure4_action_df_modeling.png")
@@ -1676,7 +1858,7 @@ def _gs_lnprob(theta, rc, so, se, v1o, v2o, v1e, v2e, a, use_vsp=True):
 
 def run_gravsphere_chain(nwalkers=24, nsteps=3000, nproc=None, backend="gravsphere.h5",
                          resume=None, use_vsp=True, nbins=7, feh_quality_keep=(0,),
-                         catalog=None):
+                         catalog=None, a_star=None):
     """
     GravSphere (Read & Steger 2017) measurement of Sculptor's DM inner slope on the real
     Tolstoy+2023 data: spherical Jeans with a free Baes-van-Hese anisotropy beta(r) plus
@@ -1698,9 +1880,22 @@ def run_gravsphere_chain(nwalkers=24, nsteps=3000, nproc=None, backend="gravsphe
     print("=" * 64)
     R, vlos, label, verr = agama_load_real_tolstoy2023(
         catalog=catalog, feh_quality_keep=feh_quality_keep)     # rest-frame, outlier-clipped
-    a_star = float(np.median(R))                                       # Plummer scale = projected R_half
-    print(f"  {len(R)} stars (single tracer); Plummer light scale a = {a_star:.3f} kpc; "
-          f"VSPs {'ON' if use_vsp else 'OFF'}")
+    # Tracer Plummer scale. Default: median projected radius of the spectroscopic sample.
+    # CAVEAT: spectroscopic targeting is not spatially random (cf. WP11 Sect. 2.3, which builds
+    # an explicit selection-probability correction), so the median observed radius can exceed
+    # the true projected half-light radius. For Sculptor this default gives 0.333 kpc against
+    # Munoz+2018's photometric 11.17 arcmin = 0.273 kpc at D = 83.9 kpc, a 22% excess. Because
+    # both Virial Shape Parameters increase for more centrally concentrated tracers (Richardson
+    # & Fairbairn 2014, Sect. 2.2), an over-extended tracer scale lowers the predicted zeta and
+    # can push the fit toward a more cored halo. Pass a_star explicitly to test that systematic.
+    if a_star is None:
+        a_star = float(np.median(R))
+        src = "median projected radius"
+    else:
+        a_star = float(a_star)
+        src = "user-specified"
+    print(f"  {len(R)} stars (single tracer); Plummer light scale a = {a_star:.3f} kpc "
+          f"({src}); VSPs {'ON' if use_vsp else 'OFF'}")
 
     # binned sigma_los + observed VSPs with bootstrap errors
     edges = np.quantile(R, np.linspace(0, 1, nbins + 1))
@@ -1773,7 +1968,7 @@ def run_gravsphere_chain(nwalkers=24, nsteps=3000, nproc=None, backend="gravsphe
         ax.fill_between(rr, blo, bhi, color='teal', alpha=0.25); ax.plot(rr, bmid, color='teal', lw=2)
         ax.axhline(0, color='k', ls='--', lw=1); ax.set_xscale('log')
         ax.set_xlabel(r'$r$ [kpc]'); ax.set_ylabel(r'anisotropy $\beta(r)$')
-        ax.set_title('GravSphere anisotropy profile (median, 1σ)'); ax.grid(alpha=0.3, which='both')
+        ax.grid(alpha=0.3, which='both')
         fig.savefig(_gf("figure_gravsphere_beta.png"), dpi=140, bbox_inches='tight'); plt.close(fig)
         print("  saved figure_gravsphere_beta.png")
     except Exception as exc:
@@ -2746,6 +2941,29 @@ def make_fig4_all_chains(out=None, chains=None, n_draw=200):
         ax.plot(rgrid, mid, color=color, lw=2.2, label=label)
         plotted.append(label)
 
+    # WP11 two-point estimator: not a continuous profile fit, so it cannot contribute a
+    # curve+band like the other frameworks -- shown instead as two discrete points with
+    # error bars, following WP11's own convention (their Fig. 14 overlays literature virial
+    # mass estimates as symbols on continuous mass-profile curves). Density at each point is
+    # the implied local slope-weighted value, rho(r) = Gamma*M(r)/(4*pi*r^3), propagated
+    # through the full joint posterior (preserves rh-M-Gamma correlations) rather than
+    # combining separately-percentiled point estimates.
+    wp11_path = _gf("wp11_chain.npy")
+    if os.path.exists(wp11_path):
+        try:
+            d = wp11_derived(np.load(wp11_path))
+            r1_kpc, r2_kpc = d['rh1'] / 1e3, d['rh2'] / 1e3               # pc -> kpc
+            rho1 = d['Gamma'] * d['M1'] / (4 * np.pi * r1_kpc ** 3)       # Msun/kpc^3
+            rho2 = d['Gamma'] * d['M2'] / (4 * np.pi * r2_kpc ** 3)
+            for r_s, rho_s, mk in ((r1_kpc, rho1, 'MR'), (r2_kpc, rho2, 'MP')):
+                r_lo, r_mid, r_hi = np.percentile(r_s, [16, 50, 84])
+                rho_lo, rho_mid, rho_hi = np.percentile(rho_s, [16, 50, 84])
+                ax.errorbar(r_mid, rho_mid, yerr=[[rho_mid - rho_lo], [rho_hi - rho_mid]],
+                           fmt='D', color='firebrick', ms=7, mec='k', mew=0.6, capsize=3,
+                           zorder=5, label='WP11 (this work)' if mk == 'MR' else None)
+        except Exception as exc:
+            print(f"  WP11 data points skipped ({str(exc)[:60]})")
+
     if not plotted:
         print("  no chains found -- run --dm5 / --gravsphere / --continuous / --chain first.")
         plt.close(fig); return None
@@ -2768,7 +2986,6 @@ def make_fig4_all_chains(out=None, chains=None, n_draw=200):
 
     ax.set_xscale('log'); ax.set_yscale('log')
     ax.set_xlabel(r'$r$  [kpc]'); ax.set_ylabel(r'$\rho_{\rm DM}(r)$  [$M_\odot\,{\rm kpc}^{-3}$]')
-    ax.set_title(f'{GAL["name"]}: DM density across frameworks vs AP25')
     ax.legend(fontsize=8.5, loc='lower left'); ax.grid(alpha=0.25, which='both')
     fig.tight_layout(); fig.savefig(out, dpi=140, bbox_inches='tight'); plt.close(fig)
     print(f"--> Saved {out}  (frameworks: {', '.join(plotted)})")
@@ -2930,12 +3147,13 @@ def run_sliding_metallicity_test(catalog=None, feh_quality_keep=None,
     below1 = gammas[dchi2 < 1.0]
     grange = (float(below1.min()), float(below1.max())) if len(below1) else (np.nan, np.nan)
 
-    fig, (axL, axR) = plt.subplots(1, 2, figsize=(13, 5))
+    # Stacked vertically rather than side-by-side: the two panels share no axis, so nothing is
+    # lost by stacking, and a column-width float can sit beside the text that discusses it.
+    fig, (axL, axR) = plt.subplots(2, 1, figsize=(6.5, 8.4))
     axL.plot(thr, sig_mp, '-o', color='royalblue', ms=4, label=r'"metal-poor" side ([Fe/H] < thr)')
     axL.plot(thr, sig_mr, '-s', color='crimson', ms=4, label=r'"metal-rich" side ([Fe/H] > thr)')
     axL.axvline(med, color='k', ls='--', lw=1.2, label=f'median split = {med:.2f}')
     axL.set_xlabel('[Fe/H] split threshold  [dex]'); axL.set_ylabel(r'$\sigma_{\rm los}$  [km s$^{-1}$]')
-    axL.set_title('Kinematics vary smoothly with the split\n(a continuum, not two fixed populations)')
     axL.legend(fontsize=8.5); axL.grid(alpha=0.3)
 
     axR.plot(gammas, dchi2, '-o', color='purple', ms=4)
@@ -2947,13 +3165,15 @@ def run_sliding_metallicity_test(catalog=None, feh_quality_keep=None,
     axR.text(1.0, 0.96, ' cusp', transform=axR.get_xaxis_transform(), fontsize=8, va='top')
     axR.set_xlabel(r'DM inner slope $\gamma$')
     axR.set_ylabel(r'$\Delta\chi^2$  ($\sigma_{\rm los}$ only, profiled over $r_s,\rho_s$)')
-    axR.set_title(f'$\\sigma_{{\\rm los}}$ cannot pin the slope (degenerate):\n'
-                  f'$\\gamma\\in[{grange[0]:.2f},{grange[1]:.2f}]$ within $1\\sigma$')
+    # The 1-sigma gamma range is a measured quantity, so it stays on the figure -- but as an
+    # in-axes annotation rather than a title (titles are carried by the LaTeX caption).
+    axR.text(0.97, 0.03,
+             f'$\\gamma\\in[{grange[0]:.2f},{grange[1]:.2f}]$ within $1\\sigma$',
+             transform=axR.transAxes, va='bottom', ha='right', fontsize=10,
+             bbox=dict(boxstyle='round', fc='white', ec='0.7', alpha=0.85))
     axR.set_ylim(-0.3, min(np.nanmax(dchi2), 12)); axR.legend(fontsize=8.5); axR.grid(alpha=0.3)
 
     _dipstr = f", dip $p$={dp:.2f}" if dip is not None else ""
-    fig.suptitle('Sculptor is a continuum, and $\\sigma_{\\rm los}$ alone is degenerate in $\\gamma$  '
-                 f'(BC={bc:.2f}, $\\Delta$BIC$_{{1-2}}$={dbic:+.0f}{_dipstr})', fontsize=12.5)
     fig.tight_layout(); fig.savefig(out, dpi=150, bbox_inches='tight'); plt.close(fig)
     print(f"--> Saved {out}")
     _dipmsg = (f", Hartigan dip p = {dp:.3f} ({'unimodal' if dp > 0.05 else 'multimodal'})"
@@ -3070,9 +3290,11 @@ def run_bias_gate(gamma_true=(0.4, 1.0), n_real=40, out="figure_bias_gate.png"):
         ax.axvline(gt, color='k', ls='--', lw=2, label=f'truth $\\gamma$={gt}')
         ax.axvline(gd.mean(), color='crimson', lw=1.5); ax.axvline(gc.mean(), color='seagreen', lw=1.5)
         ax.set_xlabel(r'recovered $\gamma$ (posterior median)'); ax.set_ylabel('realisations')
-        ax.set_title(f'$\\gamma_{{\\rm true}}={gt}$'); ax.legend(fontsize=8)
-    fig.suptitle('Bias gate: the two-population split biases the DM inner slope; '
-                 'a continuous treatment does not', fontsize=12)
+        # in-axes label rather than set_title (titles carried by the LaTeX caption)
+        ax.text(0.03, 0.96, f'$\\gamma_{{\\rm true}}={gt}$', transform=ax.transAxes,
+                va='top', ha='left', fontsize=11,
+                bbox=dict(boxstyle='round', fc='white', ec='0.7', alpha=0.85))
+        ax.legend(fontsize=8)
     fig.tight_layout(); fig.savefig(out, dpi=150, bbox_inches='tight'); plt.close(fig)
     print(f"\n--> Saved {out}")
     return results
@@ -3185,9 +3407,10 @@ def run_reverse_bias_gate(gamma_true=(0.4, 1.0), n_real=40, out="figure_reverse_
         ax.axvline(gt, color='k', ls='--', lw=2, label=f'truth $\\gamma$={gt}')
         ax.axvline(gd.mean(), color='crimson', lw=1.5); ax.axvline(gc.mean(), color='seagreen', lw=1.5)
         ax.set_xlabel(r'recovered $\gamma$ (posterior median)'); ax.set_ylabel('realisations')
-        ax.set_title(f'$\\gamma_{{\\rm true}}={gt}$  (two discrete populations)'); ax.legend(fontsize=8)
-    fig.suptitle('Reverse gate: does a continuous treatment recover the slope when the '
-                 'truth is two discrete populations?', fontsize=12)
+        ax.text(0.03, 0.96, f'$\\gamma_{{\\rm true}}={gt}$ (two discrete populations)',
+                transform=ax.transAxes, va='top', ha='left', fontsize=11,
+                bbox=dict(boxstyle='round', fc='white', ec='0.7', alpha=0.85))
+        ax.legend(fontsize=8)
     fig.tight_layout(); fig.savefig(out, dpi=150, bbox_inches='tight'); plt.close(fig)
     print(f"\n--> Saved {out}")
     return results
@@ -3282,8 +3505,13 @@ def run_gate_diagnostics(gamma_true=(0.4, 1.0), n_real=40, out="figure_gate_diag
         print(f"          Bias that survives the scramble is SPATIAL (tracer structure), not "
               f"chemo-dynamical.")
 
-    fig, axes = plt.subplots(1, len(gamma_true), figsize=(6.6 * len(gamma_true), 4.8), squeeze=False)
-    for ax, gt in zip(axes[0], gamma_true):
+    # Stacked vertically at column width rather than side-by-side: each panel ends up about
+    # the same size either way, but a column-width float can sit next to the text that
+    # discusses it instead of jumping to a page top as a full-width float must.
+    n_panels = len(gamma_true)
+    fig, axes = plt.subplots(n_panels, 1, figsize=(6.6, 3.1 * n_panels), squeeze=False,
+                             sharex=True)
+    for ax, gt in zip(axes[:, 0], gamma_true):
         r = results[gt]
         labels = ['null\nsplit', 'null\nall-star', 'scrambled\nsplit', 'scrambled\nall-star']
         keys = ['null_disc', 'null_cont', 'scr_disc', 'scr_cont']
@@ -3295,11 +3523,14 @@ def run_gate_diagnostics(gamma_true=(0.4, 1.0), n_real=40, out="figure_gate_diag
             ax.annotate(f'{v.mean()-gt:+.2f}', (i, v.mean()), textcoords='offset points',
                         xytext=(0, 13), ha='center', fontsize=9)
         ax.axhline(gt, color='k', ls='--', lw=2, label=f'truth $\\gamma$={gt}')
-        ax.set_xticks(range(4)); ax.set_xticklabels(labels, fontsize=9)
-        ax.set_xlim(-0.5, 3.5); ax.set_ylabel(r'recovered $\gamma$ (posterior median)')
-        ax.set_title(f'$\\gamma_{{\\rm true}}={gt}$'); ax.legend(fontsize=9); ax.grid(alpha=0.3)
-    fig.suptitle('Gate controls: baseline estimator offset (null) and spatial-vs-chemical bias '
-                 '(scramble)', fontsize=12)
+        ax.set_xticks(range(4))
+        ax.set_xlim(-0.5, 3.5); ax.set_ylabel(r'recovered $\gamma$')
+        ax.legend(fontsize=9, loc='best'); ax.grid(alpha=0.3)
+        # panel identity as in-axes text, not a title (titles were removed paper-wide)
+        ax.text(0.02, 0.94, f'$\\gamma_{{\\rm true}}={gt}$', transform=ax.transAxes,
+                va='top', ha='left', fontsize=11,
+                bbox=dict(boxstyle='round', fc='white', ec='0.7', alpha=0.85))
+    axes[-1, 0].set_xticklabels(labels, fontsize=9)     # x labels on the bottom panel only
     fig.tight_layout(); fig.savefig(out, dpi=150, bbox_inches='tight'); plt.close(fig)
     print(f"\n--> Saved {out}")
     return results
@@ -3375,8 +3606,10 @@ def run_shrinkage_test(gamma_true=(0.4, 1.0), nsteps_grid=(400, 1600, 6400), n_r
             print(f"       => the reported gamma is pulled toward {prior_med:.2f}; the true slope "
                   f"is {'LOWER (MORE CORED)' if gt < prior_med else 'HIGHER'}. Report it.")
 
-    fig, axes = plt.subplots(1, len(gamma_true), figsize=(6.4 * len(gamma_true), 4.6), squeeze=False)
-    for ax, gt in zip(axes[0], gamma_true):
+    n_panels = len(gamma_true)
+    fig, axes = plt.subplots(n_panels, 1, figsize=(6.4, 3.0 * n_panels), squeeze=False,
+                             sharex=True)
+    for ax, gt in zip(axes[:, 0], gamma_true):
         m = np.array([v.mean() for v in results[gt]])
         e = np.array([v.std() / np.sqrt(len(v)) for v in results[gt]])
         ax.errorbar(nsteps_grid, m - gt, yerr=e, fmt='o-', color='darkslateblue', capsize=4, lw=1.8,
@@ -3384,10 +3617,12 @@ def run_shrinkage_test(gamma_true=(0.4, 1.0), nsteps_grid=(400, 1600, 6400), n_r
         ax.axhline(0, color='k', ls='--', lw=2, label='unbiased')
         ax.axhline(prior_med - gt, color='crimson', ls=':', lw=1.6,
                    label=f'full shrinkage to prior median ({prior_med:.2f})')
-        ax.set_xscale('log'); ax.set_xlabel('MCMC steps'); ax.set_ylabel(r'bias in recovered $\gamma$')
-        ax.set_title(f'$\\gamma_{{\\rm true}}={gt}$'); ax.legend(fontsize=8); ax.grid(alpha=0.3)
-    fig.suptitle('Is the baseline bias the prior or the chain length? '
-                 '(shrinking = convergence; flat = prior)', fontsize=12)
+        ax.set_xscale('log'); ax.set_ylabel(r'bias in recovered $\gamma$')
+        ax.legend(fontsize=8, loc='best'); ax.grid(alpha=0.3)
+        ax.text(0.02, 0.94, f'$\\gamma_{{\\rm true}}={gt}$', transform=ax.transAxes,
+                va='top', ha='left', fontsize=11,
+                bbox=dict(boxstyle='round', fc='white', ec='0.7', alpha=0.85))
+    axes[-1, 0].set_xlabel('MCMC steps')                # x label on the bottom panel only
     fig.tight_layout(); fig.savefig(out, dpi=150, bbox_inches='tight'); plt.close(fig)
     print(f"\n--> Saved {out}")
     return results
@@ -3437,8 +3672,6 @@ def run_bias_vs_realizations(gamma_true=1.0, max_real=40, out="figure_bias_vs_re
     ax.axhline(0.0, color='k', ls='--', lw=1.5, label='unbiased (truth)')
     ax.set_xlabel('number of mock realisations')
     ax.set_ylabel(r'mean recovered-$\gamma$ bias  ($\langle\gamma\rangle-\gamma_{\rm true}$)')
-    ax.set_title(f'Bias convergence vs sampling  ($\\gamma_{{\\rm true}}={gamma_true}$; '
-                 'band = 25th-75th percentile)')
     ax.legend(fontsize=9); ax.grid(alpha=0.3)
     fig.tight_layout(); fig.savefig(out, dpi=150, bbox_inches='tight'); plt.close(fig)
     print(f"\n--> Saved {out}")
@@ -3486,6 +3719,10 @@ def make_data_overview(catalog=None, feh_quality_keep=None,
     med = np.median(feh)
     mp, mr = feh < med, feh >= med
     cMP, cMR = 'royalblue', 'crimson'
+    # Fornax's metallicity proxy is the Mg index, not [Fe/H]; hardcoding '[Fe/H]' mislabels
+    # every metallicity axis when this figure is generated for Fornax.
+    mlabel = '[Fe/H]' if GAL['name'].lower() == 'sculptor' else r'Mg index $W^\prime$'
+    munit = '  [dex]' if GAL['name'].lower() == 'sculptor' else ''
 
     fig, ax = plt.subplots(2, 3, figsize=(15, 9))
 
@@ -3514,7 +3751,7 @@ def make_data_overview(catalog=None, feh_quality_keep=None,
                bbox=dict(boxstyle='round', fc='white', ec='0.7', alpha=0.85))
     except Exception:
         pass
-    a.set_xlabel('[Fe/H]  [dex]'); a.set_ylabel('N stars')
+    a.set_xlabel(mlabel + munit); a.set_ylabel('N stars')
     a.set_title('Metallicity distribution'); a.legend(fontsize=8)
 
     # (3) projected-radius histogram
@@ -3529,7 +3766,7 @@ def make_data_overview(catalog=None, feh_quality_keep=None,
                    vmin=np.percentile(feh, 2), vmax=np.percentile(feh, 98))
     a.set_xlabel(r'$\Delta$RA  [kpc]'); a.set_ylabel(r'$\Delta$Dec  [kpc]')
     a.set_aspect('equal'); a.invert_xaxis(); a.set_title('On-sky distribution')
-    plt.colorbar(sc, ax=a, label='[Fe/H]', fraction=0.046)
+    plt.colorbar(sc, ax=a, label=mlabel, fraction=0.046)
 
     # (5) kinematics: velocity vs radius
     a = ax[1, 1]
@@ -3543,12 +3780,10 @@ def make_data_overview(catalog=None, feh_quality_keep=None,
     a = ax[1, 2]
     sc = a.scatter(feh, vlos, c=R, s=9, cmap='viridis')
     a.axhline(0, color='k', ls='--', lw=1)
-    a.set_xlabel('[Fe/H]  [dex]'); a.set_ylabel(r'$v_{\rm los}$  [km s$^{-1}$]')
+    a.set_xlabel(mlabel + munit); a.set_ylabel(r'$v_{\rm los}$  [km s$^{-1}$]')
     a.set_title('Chemodynamics: velocity vs metallicity')
     plt.colorbar(sc, ax=a, label='$R$ [kpc]', fraction=0.046)
 
-    fig.suptitle('Sculptor spectroscopic sample (Tolstoy et al. 2023) — data overview',
-                 fontsize=13)
     fig.tight_layout(); fig.savefig(out, dpi=140, bbox_inches='tight'); plt.close(fig)
     print(f"--> Saved {out}  ({len(vlos)} stars)")
     return out
@@ -3607,26 +3842,50 @@ def make_dispersion_profile(out=None, nbins=8, use_gaia=False):
 
     ax.set_xlabel(r'projected radius $R$  [kpc]')
     ax.set_ylabel(r'velocity dispersion  [km s$^{-1}$]')
-    ax.set_title(f'{GAL["name"]}: radial velocity-dispersion profile')
     ax.grid(alpha=0.3); ax.legend(fontsize=9)
     fig.tight_layout(); fig.savefig(out, dpi=150, bbox_inches='tight'); plt.close(fig)
     print(f"--> Saved {out}  ({len(Rc)} radial bins)")
     return out
 
 
-def _load_gaia_matched():
+def _load_gaia_matched(feh_quality_keep=None):
     """Cross-match the active galaxy's spectroscopic members to Gaia DR3 proper motions and
     compute PM membership. Returns a DataFrame (ra, dec, pmra, pmdec, P_mem_PM, R_kpc).
-    Requires network/Gaia access; raises on failure so callers can fall back."""
+    Requires network/Gaia access; raises on failure so callers can fall back.
+
+    `feh_quality_keep`: if None (default), no metallicity-quality cut is applied, giving the
+    full v_los sample (1604 stars for Sculptor) -- appropriate for the sky map and the
+    ensemble action statistics, which do not depend on [Fe/H] reliability. Pass
+    GAL['feh_quality_keep'] to apply the same cut used by wp11_load_data(), giving the
+    primary 1339-star sample; the two-population estimator splits on metallicity, so a
+    robustness test of that estimator must run on the sample whose metallicities it trusts,
+    otherwise its baseline will not reproduce the headline value.
+
+    Caches the final result to disk (per galaxy AND per quality-cut variant, via _gf) after a
+    successful fetch. Gaia's async TAP endpoint has known intermittent result-retrieval
+    failures (see fetch_gaia_with_epoch_correction); caching means a single successful run is
+    enough for every subsequent figure/analysis that touches this data, rather than
+    re-exposing every call to that risk. Delete the cache file to force a re-fetch.
+    """
     import pandas as pd
+    tag = "_fq" if feh_quality_keep else ""            # separate cache per sample variant
+    cache_path = _gf(f"gaia_matched_cache{tag}.csv")
+    if os.path.exists(cache_path) and not globals().get('_FORCE_GAIA_REFRESH', False):
+        print(f"  [Gaia cache] loading {cache_path} (delete this file to force a re-fetch)")
+        return pd.read_csv(cache_path)
     from astropy.coordinates import SkyCoord
     import astropy.units as u
     ra, dec, vlos, verr, feh, feherr, _g = _fetch_tolstoy2023(
         GAL['catalog'], GAL.get('cols'),
         mem_keep=(GAL.get('mem_keep') or ('m',)), require_member=bool(GAL.get('mem_keep')),
         target_col=GAL.get('target_col'), target_keep=GAL.get('target_keep'),
-        mem_min=GAL.get('mem_min'), feh_quality_keep=None)
-    df = pd.DataFrame(dict(ra=ra, dec=dec, vlos=vlos - V_SYS, feh=feh))   # rest-frame (as other loaders)
+        mem_min=GAL.get('mem_min'),
+        feh_quality_keep=(list(feh_quality_keep) if feh_quality_keep else None))
+    df = pd.DataFrame(dict(ra=ra, dec=dec, vlos=vlos - V_SYS, feh=feh,
+                           verr=verr, feherr=feherr))   # keep real per-star errors: callers that
+                                                        # refit WP11 need them, and substituting
+                                                        # constants biases Gamma (see
+                                                        # run_membership_robustness)
     coords = SkyCoord(ra=ra * u.deg, dec=dec * u.deg, frame='icrs', obstime=Time('J2000.0'))
     matched = fetch_gaia_with_epoch_correction(df, coords)         # existing Gaia infra
     matched = matched.copy()
@@ -3635,20 +3894,29 @@ def _load_gaia_matched():
                  ('RA', 'ra'), ('DEC', 'dec')]:
         if a not in matched.columns and b in matched.columns:
             matched[a] = matched[b]                                # aliases the GMM may expect
-    try:
-        memb = calculate_error_aware_membership(matched)
-        pcol = ('P_mem_PM' if 'P_mem_PM' in memb.columns
-                else [c for c in memb.columns if 'P_mem' in c][0])
-        memb['P_mem_PM'] = memb[pcol]
-    except Exception as exc:                                       # robust fallback: PM-clump membership
-        print(f"  [membership] GMM unavailable ({str(exc)[:50]}); using PM-clump distance")
-        memb = matched
-        pm = memb[['pmra', 'pmdec']].values
-        med = np.median(pm, axis=0)
-        sig = np.maximum(np.median(np.abs(pm - med), axis=0) * 1.4826, 0.05)
-        chi2 = np.sum(((pm - med) / sig) ** 2, axis=1)
-        L_S = np.exp(-0.5 * chi2); memb['P_mem_PM'] = L_S / (L_S + 0.05)
+    # The two-component GMM formerly ran here on every Gaia load. It is now opt-in via
+    # --gmmdiag, for three reasons:
+    #   (1) On this spectroscopically-preselected sample it is degenerate -- it returns
+    #       P_mem_PM = 1.0 for every star (std ~4e-13), so the P_joint filter below is inert
+    #       (run logs: 1339 -> 1339, 1604 -> 1604 stars retained).
+    #   (2) Nothing published reads its output: the sky map and the membership-robustness test
+    #       both cut on |delta mu| instead.
+    #   (3) It is a fragile 9-parameter Nelder-Mead fit that now raises on non-convergence, so
+    #       leaving it in the hot path could fail a run that never needed it.
+    # A "GMM unavailable -> PM-clump distance" fallback also lived here and is removed for the
+    # same reason as the others: it substituted a different membership calculation silently.
+    # The degeneracy itself is a documented result; calculate_error_aware_membership() is kept
+    # so that claim stays reproducible.
+    memb = matched
+    memb['P_mem_PM'] = 1.0        # by construction: these stars are spectroscopic members
+                                  # (same basis as P_mem_1D above), which is also what the
+                                  # GMM returns for every star on this sample.
     memb['R_kpc'] = _semi_major_axis_radius(memb['ra'].values, memb['dec'].values)
+    try:
+        memb.to_csv(cache_path, index=False)
+        print(f"  [Gaia cache] saved {cache_path} for future runs")
+    except Exception as exc:
+        print(f"  [Gaia cache] save skipped ({str(exc)[:60]})")
     return memb
 
 
@@ -3689,14 +3957,27 @@ def _gaia_pm_dispersion_profile(nbins=8):
     return np.array(Rc), np.array(sR), np.array(sT)
 
 
-def make_gaia_skymap(out=None, cuts=(0.0, 0.5, 0.9), arrays=None):
+def make_gaia_skymap(out=None, cuts=(100, 90, 50, 25), arrays=None):
     """
-    Gaia proper-motion sky map with one panel PER membership cut (the advisor's
-    membership-cut justification): each panel shows the on-sky distribution of stars, with
-    likely members and Milky-Way foreground distinguished, coloured by PM membership
-    probability. Demonstrates that the PM cut cleanly separates the dwarf from the foreground.
-    Pass pre-loaded `arrays=dict(ra, dec, pmra, pmdec, P_mem, R)` for offline testing;
-    otherwise cross-matches to Gaia DR3 (needs network). Writes figure_gaia_skymap.png.
+    Gaia proper-motion sky map with one panel per PM-offset percentile cut (the advisor's
+    membership-cut justification): each panel keeps the N% of stars closest to the galaxy's
+    systemic PM, coloured by that same offset magnitude |Delta mu|. Demonstrates whether
+    tightening the PM criterion changes the retained sample's spatial distribution.
+
+    Cuts on |Delta mu| percentile directly, NOT the 2-component GMM's P_mem_PM: on this
+    sample (already spectroscopic Tolstoy_I members, no raw foreground mixed in) the
+    unconstrained GMM is degenerate at both extremes -- unbounded, the foreground component
+    inflates its variance until it contributes ~nothing everywhere (w_s -> 1 for every star,
+    identically, across multiple starting points); bounding that from above just relocates
+    the pathology to the foreground collapsing toward near-zero width at the opposite bound
+    instead (see run log 2026-07-25: sigma_f pinned at the 0.05 floor, w_s inconsistent
+    across starts, 0.94-0.999). That pattern -- degenerate at whichever edge is left open --
+    indicates there is no stable, well-identified two-population PM structure to recover
+    from this pre-cleaned sample, not a tuning problem with the bounds. |Delta mu| itself
+    has no such issue: it is a direct, two-line calculation, not a 9-parameter MLE fit.
+
+    Pass pre-loaded `arrays=dict(ra, dec, pmra, pmdec, R)` for offline testing; otherwise
+    cross-matches to Gaia DR3 (needs network). Writes figure_gaia_skymap.png.
     """
     out = _gf(out or "figure_gaia_skymap.png")
     import matplotlib
@@ -3707,28 +3988,45 @@ def make_gaia_skymap(out=None, cuts=(0.0, 0.5, 0.9), arrays=None):
     if arrays is None:
         df = _load_gaia_matched()
         ra, dec = df['ra'].values, df['dec'].values
-        pmra, pmdec, pmem = df['pmra'].values, df['pmdec'].values, df['P_mem_PM'].values
+        pmra, pmdec = df['pmra'].values, df['pmdec'].values
     else:
         ra, dec = arrays['ra'], arrays['dec']
-        pmra, pmdec, pmem = arrays['pmra'], arrays['pmdec'], arrays['P_mem']
+        pmra, pmdec = arrays['pmra'], arrays['pmdec']
     dRA = (ra - RA0_DEG) * np.cos(np.radians(DEC0_DEG)); dDec = dec - DEC0_DEG
 
+    # Proper-motion offset magnitude relative to the galaxy's systemic PM (McConnachie & Venn
+    # 2020) -- a direct, physically interpretable membership diagnostic. [NOTE: verify this
+    # systemic PM value/citation matches the one quoted in the manuscript text.]
+    dmu = np.sqrt((pmra - SCULPTOR_PMRA_SYS)**2 + (pmdec - SCULPTOR_PMDEC_SYS)**2)  # mas/yr
+    vmax = np.nanpercentile(dmu, 95)
+
     n = len(cuts)
-    fig, axes = plt.subplots(1, n, figsize=(5.0 * n, 4.8), squeeze=False)
-    for k, cut in enumerate(cuts):
-        ax = axes[0][k]
-        mem = pmem >= cut
-        ax.scatter(dRA[~mem], dDec[~mem], s=8, c='0.6', marker='x', alpha=0.5, label='MW foreground')
-        sc = ax.scatter(dRA[mem], dDec[mem], s=14, c=pmem[mem], cmap='viridis', vmin=0, vmax=1,
-                        edgecolors='k', linewidths=0.2, label='members')
-        ax.set_xlabel(r'$\Delta$RA [deg]'); ax.set_title(f'$P_{{\\rm mem}} \\geq {cut:.1f}$   '
-                                                         f'({int(mem.sum())} stars)')
+    ncols = n                     # 1 x n row: wide and short, fits a full-width float without
+    nrows = 1                     # consuming most of the page (a 2x2 grid is nearly square)
+    fig, axes = plt.subplots(nrows, ncols, figsize=(4.4 * ncols, 4.6), squeeze=False)
+    flat_axes = axes.flatten()
+    sc = None
+    for k, pct in enumerate(cuts):
+        ax = flat_axes[k]
+        thresh = np.nanpercentile(dmu, pct)          # keep the tightest `pct`% by |Delta mu|
+        mem = dmu <= thresh
+        ax.scatter(dRA[~mem], dDec[~mem], s=8, c='0.6', marker='x', alpha=0.5,
+                  label=r'excluded (largest $|\Delta\mu|$)')
+        sc = ax.scatter(dRA[mem], dDec[mem], s=14, c=dmu[mem], cmap='magma_r', vmin=0, vmax=vmax,
+                        edgecolors='k', linewidths=0.2, label='retained')
+        ax.set_xlabel(r'$\Delta$RA [deg]'); ax.set_ylabel(r'$\Delta$Dec [deg]')
+        ax.text(0.03, 0.96, f'tightest {pct}%   ({int(mem.sum())} stars)',
+                transform=ax.transAxes, va='top', ha='left', fontsize=11,
+                bbox=dict(boxstyle='round', fc='white', ec='0.7', alpha=0.85))
         if k == 0:
-            ax.set_ylabel(r'$\Delta$Dec [deg]'); ax.legend(fontsize=8, loc='upper right')
+            ax.legend(fontsize=9, loc='lower right')
         ax.invert_xaxis(); ax.set_aspect('equal', 'datalim'); ax.grid(alpha=0.25)
-    cb = fig.colorbar(sc, ax=axes[0].tolist(), fraction=0.025, pad=0.02)
-    cb.set_label(r'PM membership probability $P_{\rm mem}$')
-    fig.suptitle(f'{GAL["name"]}: Gaia proper-motion membership across cuts', fontsize=13)
+    for extra in flat_axes[n:]:
+        extra.set_visible(False)
+
+    fig.tight_layout(rect=[0, 0, 0.90, 1])
+    cb = fig.colorbar(sc, ax=flat_axes[:n].tolist(), fraction=0.035, pad=0.03)
+    cb.set_label(r'$|\Delta\mu|$ from systemic PM  [mas yr$^{-1}$]')
     fig.savefig(out, dpi=150, bbox_inches='tight'); plt.close(fig)
     print(f"--> Saved {out}")
     return out
@@ -3798,16 +4096,21 @@ def make_action_space(out=None, chain_file="cont_chain.npy", arrays=None):
         axL.legend(fontsize=9)
     axL.set_xscale('log')
     axL.set_xlabel(r'radial action $J_r$  [kpc km s$^{-1}$]')
-    axL.set_ylabel(r'[Fe/H]'); axL.set_title('Metallicity vs radial action')
+    axL.set_ylabel(r'[Fe/H]')
+    # in-axes labels rather than set_title (titles are carried by the LaTeX caption)
+    axL.text(0.03, 0.05, 'metallicity vs radial action', transform=axL.transAxes,
+             va='bottom', ha='left', fontsize=10,
+             bbox=dict(boxstyle='round', fc='white', ec='0.7', alpha=0.85))
     axL.grid(alpha=0.25)
 
     sc = axR.scatter(Jr, Jz, s=14, c=feh, cmap='viridis', alpha=0.8, edgecolors='k', linewidths=0.2)
     axR.set_xscale('log'); axR.set_yscale('log')
     axR.set_xlabel(r'radial action $J_r$'); axR.set_ylabel(r'vertical action $J_z$')
-    axR.set_title('Action components coloured by [Fe/H]')
+    axR.text(0.03, 0.05, 'action components', transform=axR.transAxes,
+             va='bottom', ha='left', fontsize=10,
+             bbox=dict(boxstyle='round', fc='white', ec='0.7', alpha=0.85))
     cb = fig.colorbar(sc, ax=axR, fraction=0.046, pad=0.02); cb.set_label('[Fe/H]')
     axR.grid(alpha=0.25)
-    fig.suptitle(f'{GAL["name"]}: action-space chemodynamics', fontsize=13)
     fig.tight_layout(); fig.savefig(out, dpi=150, bbox_inches='tight'); plt.close(fig)
     print(f"--> Saved {out}  ({len(Jr)} stars)")
     return out
@@ -4494,7 +4797,6 @@ def make_figure1_two_galaxy(galaxies=('sculptor', 'fornax'), out="figure1_two_ga
     finally:
         set_galaxy(saved)                                         # restore
 
-    fig.suptitle('Data presentation: chemo-dynamics of two dwarf spheroidals', fontsize=14)
     fig.tight_layout(); fig.savefig(out, dpi=150, bbox_inches='tight'); plt.close(fig)
     print(f"--> Saved {out}")
     return out
@@ -4565,9 +4867,14 @@ def make_wp11_figure(flat, out="figure_wp11.png"):
     axR.text(2.02, 0.96, r'NFW cusp', transform=axR.get_xaxis_transform(), fontsize=8, va='top')
     axR.set_xlabel(r'$\Gamma\equiv\Delta\log_{10}M/\Delta\log_{10}r$')
     axR.set_ylabel('probability')
-    axR.set_title(f'$\\Gamma={g50:.2f}^{{+{g84-g50:.2f}}}_{{-{g50-g16:.2f}}}$   '
-                  f'(excl. NFW: {100*s_excl:.1f}%)')
-    axR.legend(fontsize=9); axR.grid(alpha=0.25)
+    # In-axes annotation rather than set_title: on a two-panel figure the right panel's title
+    # reads as a figure title, and titles are carried by the LaTeX caption throughout.
+    axR.text(0.97, 0.97,
+             f'$\\Gamma={g50:.2f}^{{+{g84-g50:.2f}}}_{{-{g50-g16:.2f}}}$\n'
+             f'excl. NFW: {100*s_excl:.1f}%',
+             transform=axR.transAxes, va='top', ha='right', fontsize=11,
+             bbox=dict(boxstyle='round', fc='white', ec='0.7', alpha=0.85))
+    axR.legend(fontsize=9, loc='center right'); axR.grid(alpha=0.25)
     fig.tight_layout(); fig.savefig(out, dpi=150, bbox_inches='tight'); plt.close(fig)
     print(f"--> Saved {out}")
 
@@ -4595,16 +4902,26 @@ def _wp11_fit_gamma(data, nsteps=8000, nproc=None, seed=7):
     return np.percentile(G, [16, 50, 84])
 
 
-def run_membership_robustness(pmem_cuts=(0.50, 0.70, 0.90, 0.95), nsteps=8000, nproc=None, out=None):
+def run_membership_robustness(dmu_pcts=(100, 90, 75, 50, 25), nsteps=8000, nproc=None, out=None):
     """
     Membership-cut robustness test (justifies the membership selection): refit the WP11
-    mass-profile slope on the subsample surviving progressively stricter Gaia proper-motion
-    membership thresholds (P_mem > cut). Unlike a velocity clip -- which truncates the very
-    velocity distribution being measured and is therefore confounded -- the PM membership is
-    an INDEPENDENT criterion, so a stable Gamma across thresholds is a clean demonstration
-    that the result is not driven by the membership definition. Falls back to a velocity-clip
-    variant only if Gaia proper motions are unavailable. Writes
-    figure_membership_robustness.png (galaxy-tagged) and prints a table.
+    mass-profile slope on subsamples surviving progressively tighter proper-motion cuts.
+
+    Cuts on |delta mu| -- each star's PM offset from the galaxy's systemic PM -- keeping the
+    tightest `pct` per cent of the sample at each step. This replaces an earlier version that
+    thresholded the 2-component GMM's P_mem_PM column: on this spectroscopically-preselected
+    sample that column returns a constant 1.0 for every star (std ~4e-13), so every threshold
+    in [0.50, 0.95] retained the identical 1604 stars and the "robustness" test was refitting
+    the same data four times -- measuring MCMC run-to-run scatter, not membership sensitivity.
+    |delta mu| has no such degeneracy: it is a direct two-line calculation, and percentile
+    cuts vary the sample by construction (1604 -> ~1443 -> ~802 -> ~401).
+
+    Unlike a velocity clip -- which truncates the very velocity distribution being measured
+    and is therefore confounded -- a PM-offset cut is an INDEPENDENT criterion, so a stable
+    Gamma across thresholds is a clean demonstration that the result is not driven by the
+    membership definition. Requires Gaia proper motions; raises if they are unavailable
+    rather than substituting a different test. Writes figure_membership_robustness.png
+    (galaxy-tagged) and prints a table.
     """
     out = _gf(out or "figure_membership_robustness.png")
     import matplotlib
@@ -4613,36 +4930,44 @@ def run_membership_robustness(pmem_cuts=(0.50, 0.70, 0.90, 0.95), nsteps=8000, n
     import matplotlib.pyplot as plt
 
     print("=" * 64)
-    print(f"  MEMBERSHIP ROBUSTNESS  ({GAL['name']}; Gamma vs Gaia PM membership threshold)")
+    print(f"  MEMBERSHIP ROBUSTNESS  ({GAL['name']}; Gamma vs PM-offset percentile cut)")
     print("=" * 64)
-    # cross-match the WP11 sample to Gaia and attach PM membership + the WP11 observables
-    try:
-        gaia = _load_gaia_matched()                                # ra, dec, vlos, feh, P_mem_PM, R_kpc
-        base = dict(R_pc=gaia['R_kpc'].values * 1000.0, vlos=gaia['vlos'].values,
-                    feh=gaia['feh'].values,
-                    everr=np.full(len(gaia), 2.0), efeh=np.full(len(gaia), 0.1))
-        pmem = gaia['P_mem_PM'].values
-        xlabel = r'Gaia PM membership threshold  $P_{\rm mem} >$'
-        mode = 'pm'
-    except Exception as exc:                                        # Gaia unavailable -> velocity-clip fallback
-        print(f"  [robustness] Gaia PM unavailable ({str(exc)[:50]}); using velocity-clip variant")
-        base = wp11_load_data(); v = base['vlos']
-        sig = 1.4826 * np.median(np.abs(v - np.median(v)))
-        pmem = 1.0 / (1.0 + (np.abs(v - np.median(v)) / (3.0 * sig)) ** 4)   # pseudo-membership
-        pmem_cuts = (0.3, 0.5, 0.7, 0.9)
-        xlabel = r'velocity pseudo-membership threshold'
-        mode = 'vclip'
+    # No try/except here by design. Two fallbacks previously lived in this block and both
+    # substituted different science under the same figure name:
+    #   (1) Gaia unavailable -> a velocity-clip variant. But a velocity clip truncates the
+    #       very distribution being measured (see this function's docstring), which is the
+    #       confounded test this PM-offset version was written to replace. Since Gaia's async
+    #       endpoint fails intermittently, that fallback could silently produce a figure that
+    #       looks like the robustness result but is the discredited one.
+    #   (2) cache missing per-star errors -> constants, which biases Gamma high by ~0.1.
+    # If the Gaia load or the error columns are unavailable, that is a real condition and the
+    # run should stop rather than quietly answer a different question.
+    gaia = _load_gaia_matched(feh_quality_keep=GAL.get('feh_quality_keep'))
+    missing = [c for c in ('verr', 'feherr') if c not in gaia.columns]
+    if missing:
+        raise RuntimeError(
+            f"cached Gaia table is missing {missing}; it predates the per-star-error fix. "
+            f"Substituting constant errors biases Gamma high by ~0.1, so no fallback is "
+            f"applied. Delete gaia_matched_cache*.csv and re-run.")
+    base = dict(R_pc=gaia['R_kpc'].values * 1000.0, vlos=gaia['vlos'].values,
+                feh=gaia['feh'].values,
+                everr=gaia['verr'].values, efeh=gaia['feherr'].values)
+    dmu = np.sqrt((gaia['pmra'].values - SCULPTOR_PMRA_SYS) ** 2 +
+                  (gaia['pmdec'].values - SCULPTOR_PMDEC_SYS) ** 2)   # mas/yr
+    xlabel = r'PM-offset cut: tightest $N\%$ by $|\Delta\mu|$'
+    mode = 'pm-offset'
 
     rows = []
-    for cut in pmem_cuts:
-        keep = pmem >= cut
+    for pct in dmu_pcts:
+        thresh = np.nanpercentile(dmu, pct)
+        keep = dmu <= thresh
         if keep.sum() < 50:
             continue
-        data = {k: (val[keep] if hasattr(val, '__len__') and len(val) == len(pmem) else val)
+        data = {k: (val[keep] if hasattr(val, '__len__') and len(val) == len(dmu) else val)
                 for k, val in base.items()}
         g16, g50, g84 = _wp11_fit_gamma(data, nsteps=nsteps, nproc=nproc)
-        rows.append((cut, int(keep.sum()), g50, g16, g84))
-        print(f"    P_mem > {cut:.2f}: N={int(keep.sum()):4d}   Gamma = {g50:.2f} "
+        rows.append((pct, int(keep.sum()), g50, g16, g84))
+        print(f"    tightest {pct:3d}%: N={int(keep.sum()):4d}   Gamma = {g50:.2f} "
               f"(+{g84-g50:.2f}/-{g50-g16:.2f})")
     cs = np.array([r[0] for r in rows]); g50 = np.array([r[2] for r in rows])
     glo = np.array([r[3] for r in rows]); ghi = np.array([r[4] for r in rows])
@@ -4652,10 +4977,10 @@ def run_membership_robustness(pmem_cuts=(0.50, 0.70, 0.90, 0.95), nsteps=8000, n
                 capsize=4, lw=1.8, label=r'WP11 $\Gamma$ (68% CI)')
     ax.axhspan(np.min(glo), np.max(ghi), color='navy', alpha=0.08)
     ax.axhline(2.0, color='k', ls=':', lw=1.3, label=r'NFW cusp ($\Gamma=2$)')
-    for cut, n, g, _, _ in rows:
-        ax.annotate(f'N={n}', (cut, g), textcoords='offset points', xytext=(0, 10), fontsize=8, ha='center')
+    for pct, n, g, _, _ in rows:
+        ax.annotate(f'N={n}', (pct, g), textcoords='offset points', xytext=(0, 10), fontsize=8, ha='center')
+    ax.invert_xaxis()          # tighter cuts (smaller %) to the right
     ax.set_xlabel(xlabel); ax.set_ylabel(r'mass-profile slope $\Gamma$')
-    ax.set_title(f'{GAL["name"]}: WP11 slope is stable across membership thresholds')
     ax.legend(fontsize=9); ax.grid(alpha=0.3)
     fig.tight_layout(); fig.savefig(out, dpi=150, bbox_inches='tight'); plt.close(fig)
     print(f"\n--> Saved {out}")
@@ -4732,7 +5057,6 @@ def run_pop3_robustness(feh_cuts=(None, -3.00, -2.75, -2.50), nsteps=8000, nproc
     ax.set_xticks(xs); ax.set_xticklabels(labels)
     ax.set_xlabel(r'very-metal-poor floor applied to the sample')
     ax.set_ylabel(r'mass-profile slope $\Gamma$')
-    ax.set_title(f"{GAL['name']}: is the slope driven by very-metal-poor (AP24 Pop 3) stars?")
     ax.legend(fontsize=9); ax.grid(alpha=0.3)
     fig.tight_layout(); fig.savefig(out, dpi=150, bbox_inches='tight'); plt.close(fig)
     print(f"\n--> Saved {out}")
@@ -4744,7 +5068,7 @@ def run_pop3_robustness(feh_cuts=(None, -3.00, -2.75, -2.50), nsteps=8000, nproc
 
 
 def run_wp11(nwalkers=64, nsteps=6000, nproc=None, backend="wp11.h5", resume=None,
-             use_mock=False, feh_quality_keep=None, catalog=None):
+             use_mock=False, feh_quality_keep=None, catalog=None, mock_seed=3):
     """
     Walker & Penarrubia (2011) mass-slope measurement on the real Tolstoy+2023 data (or a
     known-Gamma mock with use_mock=True). Analytic likelihood -> fast; converges in minutes.
@@ -4761,7 +5085,7 @@ def run_wp11(nwalkers=64, nsteps=6000, nproc=None, backend="wp11.h5", resume=Non
           + ("(known-Gamma MOCK)" if use_mock else "(real Tolstoy+2023)"))
     print("=" * 64)
     if use_mock:
-        data, Gamma_true = wp11_generate_mock()
+        data, Gamma_true = wp11_generate_mock(seed=mock_seed)
         print(f"  MOCK: {len(data['R_pc'])} stars; true Gamma = {Gamma_true:.2f}")
     else:
         data = wp11_load_data(catalog=catalog, feh_quality_keep=feh_quality_keep)
@@ -4797,13 +5121,14 @@ def run_wp11(nwalkers=64, nsteps=6000, nproc=None, backend="wp11.h5", resume=Non
     flat = s.get_chain(discard=rep['burn'], thin=rep['thin'], flat=True)
     if len(flat) < 100:
         flat = s.get_chain(discard=max(1, s.iteration // 3), flat=True)
-    np.save(_gf("wp11_chain.npy"), flat)
+    _tag = f"_mock_s{mock_seed}" if use_mock else ""   # mock runs must not overwrite real outputs
+    np.save(_gf(f"wp11_chain{_tag}.npy"), flat)        # --fig4all reads the untagged one
     try:
-        make_corner_plot(flat, WP11_TEX, _gf("figure_wp11_corner.png"))
+        make_corner_plot(flat, WP11_TEX, _gf(f"figure_wp11{_tag}_corner.png"))
     except Exception as exc:
         print(f"  corner skipped ({exc})")
     try:
-        make_wp11_figure(flat, out=_gf("figure_wp11.png"))
+        make_wp11_figure(flat, out=_gf(f"figure_wp11{_tag}.png"))
     except Exception as exc:
         print(f"  WP11 figure skipped ({exc})")
     d = wp11_derived(flat)
@@ -4821,7 +5146,8 @@ def run_wp11(nwalkers=64, nsteps=6000, nproc=None, backend="wp11.h5", resume=Non
     print(f"         gamma_DM < 3 - Gamma = {3-g50:.2f}  (upper limit on the inner density slope)")
     print(f"         excludes NFW cusp (Gamma>2): {100*s_excl:.1f}%")
     if use_mock:
-        _, gt = wp11_generate_mock(); print(f"         [recovery] true Gamma = {gt:.2f}")
+        _, gt = wp11_generate_mock(seed=mock_seed)
+        print(f"         [recovery] true Gamma = {gt:.2f}  (mock seed {mock_seed})")
     else:
         print(f"         WP11 published (Sculptor): Gamma = 2.95 (+0.51/-0.39)")
     print("  " + "-" * 58)
@@ -4845,6 +5171,29 @@ if __name__ == "__main__":
                           "MCMC on the binned sigma_los of the real data (3 params: gamma, "
                           "log r_s, log M_DM). Converges in ~1-2 h; the well-posed reduction of "
                           "the degenerate free 5-parameter fit. Writes figure_ap25_fig4.png.")
+    _ap.add_argument("--gmmdiag", action="store_true",
+                     help="Run the two-component error-aware GMM on Gaia proper motions as a "
+                          "standalone diagnostic, printing the multi-start and bounded-sigma "
+                          "results. Not part of any published analysis: on this "
+                          "spectroscopically-preselected sample the decomposition is degenerate "
+                          "(P_mem_PM = 1.0 for every star), which is itself the documented "
+                          "result. Retained so that claim stays reproducible.")
+    _ap.add_argument("--mockseed", type=int, default=3,
+                     help="Random seed for the WP11 known-Gamma mock (--wp11 --mock). Vary to "
+                          "test whether the recovery offset is systematic or a single-draw "
+                          "fluctuation. Each seed gets its own backend and figure filenames.")
+    _ap.add_argument("--seed", type=int, default=42,
+                     help="Random seed for MCMC walker initialization (--dm5). The sigma_los-only "
+                          "likelihood is nearly flat in gamma, so where the walkers start can "
+                          "affect where the ensemble settles; varying this tests whether the "
+                          "posterior is determined by the data or by the starting ball. Use a "
+                          "separate --backend for each seed.")
+    _ap.add_argument("--astar", type=float, default=None,
+                     help="Override the GravSphere tracer Plummer scale (kpc). Default is the "
+                          "median projected radius of the spectroscopic sample (0.333 kpc for "
+                          "Sculptor), which exceeds Munoz+2018's photometric half-light radius "
+                          "(0.273 kpc) by 22%% because spectroscopic targeting is not spatially "
+                          "random. Pass --astar 0.273 to test how much that biases gamma.")
     _ap.add_argument("--gravsphere", action="store_true",
                      help="GravSphere (Read & Steger 2017): spherical Jeans + Virial Shape "
                           "Parameters with free anisotropy beta(r), on the real data. The "
@@ -4993,8 +5342,11 @@ if __name__ == "__main__":
 
     if _args.wp11:                                    # WP11 mass-slope method, then exit
         _bk = _args.backend if _args.backend != "scl25.h5" else _gf("wp11.h5")
+        if _args.mock and _bk == _gf("wp11.h5"):
+            _bk = _gf(f"wp11_mock_s{_args.mockseed}.h5")   # never share the real backend
         run_wp11(nsteps=_args.steps, nproc=(_args.nproc or None), backend=_bk,
-                 use_mock=_args.mock, resume=(False if _args.no_resume else None))
+                 use_mock=_args.mock, resume=(False if _args.no_resume else None),
+                 mock_seed=_args.mockseed)
         sys.exit(0)
 
     if _args.continuous:                              # continuous f(J,[Fe/H]) model, then exit
@@ -5048,18 +5400,37 @@ if __name__ == "__main__":
         make_framework_comparison()
         sys.exit(0)
 
+    if _args.gmmdiag:                                 # standalone GMM diagnostic, then exit
+        _g = _load_gaia_matched(feh_quality_keep=GAL.get('feh_quality_keep'))
+        for _a, _b in [('RA_deg', 'ra'), ('DEC_deg', 'dec')]:
+            if _a not in _g.columns and _b in _g.columns:
+                _g[_a] = _g[_b]
+        _res = calculate_error_aware_membership(_g)
+        _p = _res['P_mem_PM'].values
+        print(f"\n  P_mem_PM over {len(_p)} stars: min={_p.min():.6f} max={_p.max():.6f} "
+              f"std={_p.std():.3e}")
+        print(f"  stars below 0.99: {(_p < 0.99).sum()}  "
+              f"(a degenerate fit returns ~1.0 for every star)")
+        sys.exit(0)
+
     if _args.gravsphere:                              # GravSphere (Jeans + VSPs), then exit
         _bk = _args.backend if _args.backend != "scl25.h5" else _gf("gravsphere.h5")
+        if _args.astar is not None and _bk == _gf("gravsphere.h5"):
+            _bk = _gf(f"gravsphere_a{_args.astar:.3f}.h5")   # don't resume into the default chain
         run_gravsphere_chain(nwalkers=(_args.walkers if 14 <= _args.walkers <= 40 else 24),
                              nsteps=_args.steps, nproc=(_args.nproc or None),
-                             backend=_bk, resume=(False if _args.no_resume else None))
+                             backend=_bk, resume=(False if _args.no_resume else None),
+                             a_star=_args.astar)
         sys.exit(0)
 
     if _args.dm5:                                     # 5-parameter DM model (robust+fast), then exit
         _bk = _args.backend if _args.backend != "scl25.h5" else _gf("dm5.h5")
-        run_dm5_chain(nwalkers=(_args.walkers if 14 <= _args.walkers <= 40 else 24),
+        if _args.seed != 42 and _bk == _gf("dm5.h5"):
+            _bk = _gf(f"dm5_seed{_args.seed}.h5")     # don't mix seeds in one backend
+        run_dm5_chain(nwalkers=(_args.walkers if 14 <= _args.walkers <= 200 else 24),
                       nsteps=_args.steps, nproc=(_args.nproc or None),
-                      backend=_bk, resume=(False if _args.no_resume else None))
+                      backend=_bk, resume=(False if _args.no_resume else None),
+                      seed=_args.seed)
         sys.exit(0)
 
     if _args.chain:                                   # full production chain, then exit
