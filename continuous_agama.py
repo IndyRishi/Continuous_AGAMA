@@ -109,7 +109,7 @@ DEC0_DEG = -33.7186
 DISTANCE_KPC = 84.0           # Martínez-Vázquez et al. (2015); adopted by Arroyo-Polonio+25
 KAPPA        = 4.74047        # km/s per (mas/yr × kpc)
 
-# Sculptor systemic PM — Gaia eDR3 (McConnachie & Venn 2020)
+# Sculptor systemic PM, Gaia eDR3, zero-point corrected (Battaglia et al. 2022)
 SCULPTOR_PMRA_SYS  =  0.100   # mas/yr
 SCULPTOR_PMDEC_SYS = -0.147   # mas/yr
 # Battaglia et al. (2022, A&A 657, A54): Table B.2 raw systemic PM (0.099, -0.159) minus
@@ -213,6 +213,11 @@ def set_galaxy(name):
 DM_RCUT = 20.0          # kpc  (~10x the outermost star; negligible inner effect)
 DM_XI   = 1.0           # exponential-cutoff strength
 # Verified best fit (A&A 699, A347): inner slope + scale radius (1-sigma)
+# Prior bounds on the inner slope gamma for the spherical-Jeans fit (--dm5).
+# Exposed via --gammaprior so that the prior sensitivity of a near-flat
+# sigma_los-only likelihood can be measured rather than assumed.
+JEANS_GAMMA_PRIOR = (0.0, 1.9)
+
 AP25 = dict(gamma=0.39, gamma_hi=0.23, gamma_lo=0.26,
             rs=0.79, rs_hi=0.38, rs_lo=0.17,
             ref="Arroyo-Polonio et al. 2025, A&A 699, A347")
@@ -526,9 +531,9 @@ def calculate_error_aware_membership(df):
           2.0, 2.0,
           0.30]
 
-    # Single-start Nelder-Mead previously converged with w_s (member weight) within ~1e-7 of
-    # the upper boundary for every star in this sample -- functionally "no foreground",
-    # observed 2026-07-24. That guard clause in error_aware_gmm_likelihood (0 < w_s < 1)
+    # Single-start Nelder-Mead converges with w_s (member weight) within ~1e-7 of
+    # the upper boundary for every star in this sample -- functionally "no foreground".
+    # That guard clause in error_aware_gmm_likelihood (0 < w_s < 1)
     # means it never got there as a hard-coded 1.0, but a single start can't distinguish a
     # genuine result (this sample really has no separable foreground left, since it is
     # already Tolstoy_I's spectroscopically-confirmed member list, and this is an
@@ -561,10 +566,11 @@ def calculate_error_aware_membership(df):
     # a 2D Gaussian's peak density scales as 1/(sigma_x*sigma_y), so an inflating foreground
     # component can "win" by making its own likelihood negligible everywhere, letting w_s->1
     # by default regardless of whether a real, tighter foreground population exists. Capping
-    # sigma_f at a physically reasonable ceiling removes that escape route. [NOTE: 3.0 mas/yr
-    # is a reasonable-but-unverified ceiling for this field's expected MW foreground PM
-    # dispersion -- worth checking against a literature value for Sculptor's line of sight
-    # before treating this as final, but it is a principled, not arbitrary, choice.]
+    # sigma_f at a physically reasonable ceiling removes that escape route. The 3.0 mas/yr
+    # cap is a principled bound rather than a fitted or literature value: it sits well above
+    # any plausible MW foreground PM dispersion along this line of sight while still
+    # preventing the runaway. The non-identification result is insensitive to it -- the fit
+    # returns P_mem = 1 for every star both bounded and unbounded.
     bounds = [(SCULPTOR_PMRA_SYS - 0.5, SCULPTOR_PMRA_SYS + 0.5),
               (SCULPTOR_PMDEC_SYS - 0.5, SCULPTOR_PMDEC_SYS + 0.5),
               (0.001, 0.5), (0.001, 0.5),
@@ -678,11 +684,11 @@ def project_gaia_challenge_mock(primary_url, output_file, default_halo='core'):
     [FIX-K] Automatic parsec-to-kpc unit detection and conversion.
     ───────────────────────────────────────────────────────────────
     The Surrey AstroWiki Gaia Challenge files store particle positions in
-    parsecs (x, y ~ 100–1200 pc for Sculptor-sized halos), not kpc.
-    The code previously assigned these raw values to a column called 'R_kpc',
-    producing a 1000× unit error (x-axis showed 100–1200 labelled as "kpc";
-    correct range is 0.1–1.2 kpc).  Velocity components are in km/s and
-    unaffected — the PM conversion factor uses DISTANCE_KPC independently.
+    parsecs (x, y ~ 100-1200 pc for Sculptor-sized halos), not kpc. Assigning
+    these raw values to a column named 'R_kpc' produces a 1000x unit error
+    (x-axis spanning 100-1200 labelled as "kpc"; the correct range is
+    0.1-1.2 kpc). Velocity components are in km/s and
+    unaffected -- the PM conversion factor uses DISTANCE_KPC independently.
 
     Detection: if median(R_raw) > 10 the positions are in parsecs; divide by 1000.
     """
@@ -854,8 +860,7 @@ def reproduce_arroyo_polonio_fig4():
 # PHASE 3: SEMI-EMPIRICAL PROFILE + REAL LITERATURE COMPARISON
 # ============================================================
 # Real, individually-sourced Sculptor enclosed-mass constraints, each plotted at
-# the radius its paper actually constrains. Replaces the previously fabricated
-# Z16/R19/P20/H20 points (which sat at invented coordinates).
+# the radius its paper actually constrains.
 #   label,             r_kpc, M_Msun,  err_Msun, colour,       reference
 SCULPTOR_LIT_MASSES = [
     ("Walker+09/Wolf+10", 0.37, 2.20e7, 0.45e7, "black",       "robust M_½ = 3σ²r_½/G"),
@@ -904,7 +909,7 @@ def plot_inferred_halo_profiles(r_array=None,
              label='Semi-empirical Burkert core (median)')
     ax1.fill_between(r_array, mass_1sigma_lower, mass_1sigma_upper,
                      color='black', alpha=0.20, label=r'$1\sigma$ confidence')
-    # Real literature points (replaces fabricated Z16/R19/P20/H20)
+    # Literature enclosed-mass constraints (see SCULPTOR_LIT_MASSES above)
     for lbl, rk, M, e, col, _c in SCULPTOR_LIT_MASSES:
         ax1.errorbar([rk], [M], yerr=[[e], [e]], fmt='o', color=col,
                      capsize=4, ms=7, mec='k', mew=0.6, label=lbl)
@@ -1100,7 +1105,8 @@ def agama_lnprob_jeans(theta, pops):
     mass-anisotropy degeneracy that motivates the action-DF method), so we fit the
     well-constrained gNFW slope -- the same parameter space as the MLE."""
     gamma, log_rs, log_MDM = theta
-    if not (0.0 <= gamma <= 1.9 and -3.0 <= log_rs <= 1.0 and 7.0 <= log_MDM <= 11.0):
+    if not (JEANS_GAMMA_PRIOR[0] <= gamma <= JEANS_GAMMA_PRIOR[1]
+            and -3.0 <= log_rs <= 1.0 and 7.0 <= log_MDM <= 11.0):
         return -np.inf
     try:
         pot = dm_potential_5p(gamma, 10.0**log_rs, log_MDM, 1.0, 3.0)   # gNFW
@@ -1198,7 +1204,9 @@ def run_dm5_chain(nwalkers=24, nsteps=4000, nproc=None, backend="dm5.h5", resume
     rng = np.random.default_rng(seed)          # configurable: on a likelihood this flat in gamma,
                                                # where the walkers start can determine where the
                                                # ensemble settles. Vary to test seed stability.
-    lo = np.array([0.02, -2.9, 7.2]); hi = np.array([1.88, 0.9, 10.8])
+    _gpad = 0.01 * (JEANS_GAMMA_PRIOR[1] - JEANS_GAMMA_PRIOR[0])   # keep walkers inside the prior
+    lo = np.array([JEANS_GAMMA_PRIOR[0] + _gpad, -2.9, 7.2])
+    hi = np.array([JEANS_GAMMA_PRIOR[1] - _gpad, 0.9, 10.8])
     p0 = np.clip(init + np.array([0.05, 0.05, 0.10]) * rng.standard_normal((nw, ndim)), lo, hi)
     moves = [(emcee.moves.DEMove(), 0.8), (emcee.moves.DESnookerMove(), 0.2)]
     bk = emcee.backends.HDFBackend(backend) if HAS_H5PY else None
@@ -3993,9 +4001,9 @@ def make_gaia_skymap(out=None, cuts=(100, 90, 50, 25), arrays=None):
         pmra, pmdec = arrays['pmra'], arrays['pmdec']
     dRA = (ra - RA0_DEG) * np.cos(np.radians(DEC0_DEG)); dDec = dec - DEC0_DEG
 
-    # Proper-motion offset magnitude relative to the galaxy's systemic PM (McConnachie & Venn
-    # 2020) -- a direct, physically interpretable membership diagnostic. [NOTE: verify this
-    # systemic PM value/citation matches the one quoted in the manuscript text.]
+    # Proper-motion offset magnitude relative to the galaxy's systemic PM (see the constant
+    # block above for its derivation) -- a direct, physically interpretable membership
+    # diagnostic.
     dmu = np.sqrt((pmra - SCULPTOR_PMRA_SYS)**2 + (pmdec - SCULPTOR_PMDEC_SYS)**2)  # mas/yr
     vmax = np.nanpercentile(dmu, 95)
 
@@ -4907,10 +4915,10 @@ def run_membership_robustness(dmu_pcts=(100, 90, 75, 50, 25), nsteps=8000, nproc
     mass-profile slope on subsamples surviving progressively tighter proper-motion cuts.
 
     Cuts on |delta mu| -- each star's PM offset from the galaxy's systemic PM -- keeping the
-    tightest `pct` per cent of the sample at each step. This replaces an earlier version that
-    thresholded the 2-component GMM's P_mem_PM column: on this spectroscopically-preselected
+    tightest `pct` per cent of the sample at each step. Thresholding the 2-component GMM's
+    P_mem_PM column instead would not work here: on this spectroscopically-preselected
     sample that column returns a constant 1.0 for every star (std ~4e-13), so every threshold
-    in [0.50, 0.95] retained the identical 1604 stars and the "robustness" test was refitting
+    in [0.50, 0.95] retains the identical 1604 stars and the "robustness" test would refit
     the same data four times -- measuring MCMC run-to-run scatter, not membership sensitivity.
     |delta mu| has no such degeneracy: it is a direct two-line calculation, and percentile
     cuts vary the sample by construction (1604 -> ~1443 -> ~802 -> ~401).
@@ -5187,6 +5195,13 @@ if __name__ == "__main__":
                           "affect where the ensemble settles; varying this tests whether the "
                           "posterior is determined by the data or by the starting ball. Use a "
                           "separate --backend for each seed.")
+    _ap.add_argument("--gammaprior", nargs=2, type=float, metavar=("LO", "HI"), default=None,
+                     help="Bounds of the uniform prior on the inner slope gamma for the "
+                          "spherical-Jeans fit (--dm5); default 0.0 1.9. Because the "
+                          "sigma_los-only likelihood is nearly flat in gamma, the posterior "
+                          "median is pulled toward the prior median; re-running with different "
+                          "bounds measures how much of the reported slope is prior rather than "
+                          "data. Use a separate --backend for each choice.")
     _ap.add_argument("--astar", type=float, default=None,
                      help="Override the GravSphere tracer Plummer scale (kpc). Default is the "
                           "median projected radius of the spectroscopic sample (0.333 kpc for "
@@ -5303,6 +5318,14 @@ if __name__ == "__main__":
                           "for a faster laptop first pass)")
     _ap.add_argument("--no-resume", action="store_true", help="ignore an existing checkpoint")
     _args = _ap.parse_args()
+
+    if _args.gammaprior is not None:                  # set before any likelihood is evaluated
+        _glo, _ghi = _args.gammaprior
+        if not _ghi > _glo:
+            _ap.error("--gammaprior requires LO < HI")
+        JEANS_GAMMA_PRIOR = (_glo, _ghi)
+        print(f"  [prior] Jeans gamma prior set to U({_glo:g}, {_ghi:g}); "
+              f"median {0.5 * (_glo + _ghi):.3f}")
 
     if getattr(_args, "galaxy", "sculptor") != "sculptor":   # switch target before any command
         set_galaxy(_args.galaxy)
@@ -5444,30 +5467,19 @@ if __name__ == "__main__":
 
     # ---- default: fast phases (1-4) + Phase-5 smoke test ----
     print("=" * 60)
-    print("   CHEMO-DYNAMICAL MASTER PIPELINE  — all fixes + action-DF")
+    print("   SCULPTOR CHEMO-DYNAMICAL PIPELINE")
     print("=" * 60)
     print()
-    print("Fixes applied in this version:")
-    print("  [FIX-A] Burkert mass: 2π prefactor (was π → underestimated M by 2×)")
-    print("  [FIX-B] Cusp proxy: radially biased β≈+0.41 (was 1/R → β<0 at centre)")
-    print("  [FIX-C] Gaia query: RUWE < 1.4 astrometric quality filter added")
-    print("  [FIX-D] GMM fallback: individual Gaia errors in chi-sq denominator")
-    print("  [FIX-E] SCULPTOR_PM_SIGMA: 0.0226 mas/yr (was 0.05, ~2.3× too large)")
-    print("  [FIX-F] rho0_ref/rc_ref: explicit kwargs (was local → NameError)")
-    print("  [FIX-G] sigma_init: variance-corrected starting guess")
-    print("  [FIX-H] Threshold diagnostic: bootstrap error bands added")
-    print("  [FIX-I] SkyCoord: explicit u.deg / u.mas/u.yr unit specification")
-    print("  [FIX-J] Mmb normalisation: VizieR stores as % → divide by 100")
-    print("  [FIX-K] Gaia Challenge positions: parsec-to-kpc auto-detection")
-    print("  [NEW ] Distance updated 86 → 84 kpc (Martínez-Vázquez+15; AP25)")
-    print("  [NEW ] Phase 4: AGAMA action-based DF modeling (real method)")
-    print("         + publication-grade per-star MCMC: multiprocessing, HDF5")
-    print("           checkpointing, autocorr/split-R-hat/ESS convergence, corner.")
-    print("         Replaced fabricated Z16/R19/P20/H20 with real literature masses.")
-    print("  [NEW ] Phase 5: FULL faithful 25-parameter model (DoublePowerLaw DFs +")
-    print("         metallicity + pop-3), the rigorous validation-benchmark tier.")
-    print("         + AP24-style selection function omega(R,G) (attach_selection).")
-    print(f"         AGAMA: {HAS_AGAMA} | emcee: {HAS_EMCEE} | "
+    print("Dynamical modelling of the inner dark-matter slope of the Sculptor")
+    print("dwarf spheroidal from VLT/FLAMES spectroscopy (Tolstoy et al. 2023),")
+    print("via four methods: a generalized-NFW spherical Jeans fit, GravSphere")
+    print("with virial shape parameters, the Walker & Penarrubia (2011)")
+    print("two-population estimator, and a continuous f(J,[Fe/H]) action-based")
+    print("distribution function. Mock recovery tests quantify the bias from")
+    print("population decomposition and from tracer geometry.")
+    print()
+    print("Run with --help for the full list of analyses and options.")
+    print(f"  AGAMA: {HAS_AGAMA} | emcee: {HAS_EMCEE} | "
           f"corner: {HAS_CORNER} | h5py: {HAS_H5PY}")
     print()
 
