@@ -175,8 +175,18 @@ GALAXIES = {
         # Walker+2009 MMFS is a MULTI-galaxy catalog (Carina/Fornax/Sculptor/Sextans);
         # keep only Fornax rows. Coordinates are sexagesimal (parsed automatically).
         target_col='Target', target_keep=('for', 'fnx'),
-        # 'Mmb' is a membership PROBABILITY (0-1); keep probable members (>0.5).
+        # 'Mmb' is a membership probability; VizieR stores it on a percentage scale and the
+        # loader normalises to [0,1] before applying this threshold. Keep probable members.
         feh_quality_keep=None, mem_keep=None, mem_min=0.5,
+        # The averaged <SigMg> column in the '/stars' table is populated for only 459 of the
+        # 2633 Fornax stars. Averaging the per-exposure '/tables' entries instead recovers
+        # the full N=2603 sample of Walker & Penarrubia (2011, their Table 1).
+        mmfs_average=True,
+        # The chemical indicator here is the Walker+2009 Mg index, a pseudo-equivalent width
+        # in Angstroms: positive, spanning 0.10-0.95 over the 1st-99th percentile with a
+        # median of 0.59. The default [Fe/H] prior bounds ([-3,0] for the location) would pin
+        # the metal-rich mean against its upper edge and prevent the mixture from separating.
+        wp11_z_prior=((0.0, 1.2), (0.0, 1.0)),
         wp11_xlim=(2.5, 3.1), wp11_ylim=(7.0, 8.4)),     # Fornax: larger radii/masses
 }
 GAL = GALAXIES['sculptor']                               # active galaxy (default)
@@ -197,6 +207,7 @@ def set_galaxy(name):
     """Switch the active galaxy; reassigns the geometric/kinematic module constants so all
     loaders pick up the new target. Returns the galaxy parameter dict."""
     global GAL, V_SYS, DISTANCE_KPC, RA0_DEG, DEC0_DEG, RE_MR, RE_MP, FRAC_MR
+    global WP11_PRIOR_LO, WP11_PRIOR_HI
     key = name.strip().lower()
     if key not in GALAXIES:
         raise ValueError(f"unknown galaxy '{name}'; choose from {list(GALAXIES)}")
@@ -204,10 +215,15 @@ def set_galaxy(name):
     V_SYS = GAL['v_sys']; DISTANCE_KPC = GAL['distance_kpc']
     RA0_DEG = GAL['ra0']; DEC0_DEG = GAL['dec0']
     RE_MR = GAL['re_mr']; RE_MP = GAL['re_mp']
-    FRAC_MR = GAL['frac_mr']    # was previously NOT reset: switching to Fornax silently kept
-                                # Sculptor's 0.35 MR fraction (reported by mentor, 2026-07)
+    FRAC_MR = GAL['frac_mr']    # reset explicitly: switching target must not inherit the
+                                # previous galaxy's metal-rich fraction
+    zlo, zhi = GAL.get('wp11_z_prior', ((-3.0, 0.0), (0.0, 2.0)))
+    WP11_PRIOR_LO = np.array([0.05, 0.02, 1.5, zlo[0], zhi[0], -5.0, -5.0, -1.0, -1.0])
+    WP11_PRIOR_HI = np.array([0.95, 0.99, 3.5, zlo[1], zhi[1],  1.0,  1.0,  5.0,  5.0])
     print(f"  [galaxy] target = {GAL['name']}: D={DISTANCE_KPC} kpc, V_sys={V_SYS} km/s, "
           f"e={GAL['ellipticity']}, f_MR={FRAC_MR}, catalog={GAL['catalog']}")
+    print(f"  [galaxy] WP11 chemical-location prior: <Z>_1 in [{zlo[0]:g}, {zlo[1]:g}], "
+          f"DZ in [{zhi[0]:g}, {zhi[1]:g}]")
     return GAL
 # Paper Eq.4 truncation (fixed, as in Arroyo-Polonio+25): rho ~ ...*exp[-(r/r_cut)^xi]
 DM_RCUT = 20.0          # kpc  (~10x the outermost star; negligible inner effect)
@@ -1024,8 +1040,16 @@ def agama_generate_mock(gamma_true, rs_true, log_rho_s_true, r_a_true, seed=7):
     return m[m[:, 0] < 2.0]                            # outermost observed radius
 
 
-def agama_binned_profile(R, vlos, nbins=5):
-    """Intrinsic sigma_los(R) in radial bins (error-deconvolved)."""
+def agama_binned_profile(R, vlos, verr=None, nbins=5):
+    """Intrinsic sigma_los(R) in radial bins, deconvolved for measurement error.
+
+    Within each bin the mean squared velocity uncertainty is subtracted from the raw
+    sample variance (method of moments), so the returned dispersion estimates the
+    intrinsic scatter rather than the observed one. Where per-star errors are not
+    supplied, a constant 0.6 km/s is assumed -- the mean uncertainty of the
+    Tolstoy et al. (2023) sample. A floor keeps the variance positive in bins where the
+    measurement noise approaches the sample scatter.
+    """
     edges = np.quantile(R, np.linspace(0, 1, nbins + 1))
     rc, sig, err = [], [], []
     for i in range(nbins):
@@ -1033,7 +1057,8 @@ def agama_binned_profile(R, vlos, nbins=5):
         if m.sum() < 15:
             continue
         v = vlos[m]
-        s = np.sqrt(max(np.var(v, ddof=1) - 0.6**2, 0.5))
+        e2 = np.mean(np.asarray(verr)[m] ** 2) if verr is not None else 0.6 ** 2
+        s = np.sqrt(max(np.var(v, ddof=1) - e2, 0.5))
         rc.append(np.median(R[m])); sig.append(s)
         err.append(s / np.sqrt(2 * (m.sum() - 1)))
     return np.array(rc), np.array(sig), np.array(err)
@@ -1092,7 +1117,7 @@ def agama_binned_pops(R, vlos, label, verr, nbins=6):
     pops = []
     for r_star in (RE_MR, RE_MP):
         sel = np.isclose(label, r_star)
-        rc, so, se = agama_binned_profile(R[sel], vlos[sel], nbins=nbins)
+        rc, so, se = agama_binned_profile(R[sel], vlos[sel], verr=verr[sel], nbins=nbins)
         pops.append((r_star, rc, so, se))
     return pops
 
@@ -1211,7 +1236,7 @@ def run_dm5_chain(nwalkers=24, nsteps=4000, nproc=None, backend="dm5.h5", resume
     moves = [(emcee.moves.DEMove(), 0.8), (emcee.moves.DESnookerMove(), 0.2)]
     bk = emcee.backends.HDFBackend(backend) if HAS_H5PY else None
     resume_ok = bool(resume and bk is not None and os.path.exists(backend) and bk.iteration > 0)
-    pool = mp.Pool(nproc) if nproc > 1 else None
+    pool = _make_pool(nproc)
     try:
         s = emcee.EnsembleSampler(nw, ndim, agama_lnprob_jeans, args=(pops,),
                                   moves=moves, pool=pool, backend=bk)
@@ -1360,7 +1385,7 @@ def agama_run_mcmc(R, vlos, verr, init, w_mr=None, nwalkers=32, nsteps=3000,
     p0 = np.array(init) + scatter * rng.standard_normal((nwalkers, ndim))
     p0 = np.clip(p0, lo, hi)
 
-    pool = mp.Pool(nproc) if (nproc and nproc > 1) else None
+    pool = _make_pool(nproc)
     try:
         sampler = emcee.EnsembleSampler(
             nwalkers, ndim, agama_lnprob, args=(R, vlos, verr, w_mr),
@@ -1479,6 +1504,13 @@ def mcmc_convergence_report(sampler, labels):
         if not length_ok: why.append("chain<50*tau")
         if not accept_ok: why.append("acceptance out of [0.1,0.7]")
         print(f"    NOT CONVERGED ({', '.join(why)}) — extend the chain / more walkers.")
+        if accept < 0.01:
+            print("    *** FROZEN ENSEMBLE: acceptance ~0 means no proposal was ever accepted,")
+            print("        so the walkers never left their starting positions. Any medians and")
+            print("        intervals below describe the initial ball, NOT a posterior. Usual")
+            print("        causes: a non-finite log-probability poisoning the state at step 0,")
+            print("        or a differential-evolution move proposing from a ball too tight to")
+            print("        generate usable difference vectors. Do not report these numbers. ***")
     else:
         print("    CONVERGED (R-hat<1.01, N>50*tau, acceptance in range).")
     print("  -------------------------------------------------------------")
@@ -1933,7 +1965,7 @@ def run_gravsphere_chain(nwalkers=24, nsteps=3000, nproc=None, backend="gravsphe
     moves = [(emcee.moves.DEMove(), 0.8), (emcee.moves.DESnookerMove(), 0.2)]
     bk = emcee.backends.HDFBackend(backend) if HAS_H5PY else None
     resume_ok = bool(resume and bk is not None and os.path.exists(backend) and bk.iteration > 0)
-    pool = mp.Pool(nproc) if nproc > 1 else None
+    pool = _make_pool(nproc)
     try:
         s = emcee.EnsembleSampler(nw, ndim, _gs_lnprob,
                                   args=(rc, so, se, v1o, v2o, v1e, v2e, a_star, use_vsp),
@@ -2454,6 +2486,90 @@ def ap25_inspect_vizier(catalog="J/A+A/675/A49"):
     return cats
 
 
+def _fetch_mmfs_averaged(catalog="J/AJ/137/3100", galaxy_prefixes=('for', 'fnx'),
+                         index_col='SigMg', mem_min=None):
+    """Rebuild the per-star MMFS sample (Walker+2009) by averaging the per-exposure table.
+
+    VizieR serves this catalogue as two tables: '/stars', one row per star with positions
+    and membership, and '/tables', one row per exposure carrying the spectral indices. The
+    averaged index columns in '/stars' are populated for only a minority of stars (459 of
+    2633 for Fornax), so reading '/stars' alone discards ~83 per cent of the sample that
+    Walker & Penarrubia (2011) actually modelled (their Table 1: N=2603 for Fornax).
+
+    This routine instead takes the inverse-variance weighted mean of the velocity and the
+    chosen spectral index over each star's exposures, then joins back to '/stars' for
+    coordinates and membership. Validated against the 459 published averages: median
+    |difference| 0.003 A, max 0.017 A, i.e. well inside the per-exposure measurement error.
+
+    Returns (ra, dec, vlos, verr, index, index_err) in the same order as
+    _fetch_tolstoy2023 so it can be used interchangeably.
+    """
+    from astroquery.vizier import Vizier
+    v = Vizier(columns=["**"]); v.ROW_LIMIT = -1
+    cats = {t.meta.get('name'): t for t in v.get_catalogs(catalog)}
+    star_tab = next((t for n, t in cats.items() if n.endswith('/stars')), None)
+    exp_tab = next((t for n, t in cats.items() if n.endswith('/tables')), None)
+    if star_tab is None or exp_tab is None:
+        raise KeyError(f"{catalog}: expected both '/stars' and '/tables'; "
+                       f"found {list(cats)}")
+
+    pref = tuple(str(p).strip().lower() for p in galaxy_prefixes)
+    keep = lambda t: t[np.array([str(x).strip().lower().startswith(pref)
+                                 for x in t['Target']])]
+    star_tab, exp_tab = keep(star_tab), keep(exp_tab)
+
+    err_col = 'e_' + index_col
+    tgt = np.array([str(x).strip() for x in exp_tab['Target']])
+    agg = {}                                        # target -> [sum_wv, sum_w] per quantity
+    for col, ecol in (('HV', 'e_HV'), (index_col, err_col)):
+        vals = np.array(exp_tab[col], float)
+        errs = np.array(exp_tab[ecol], float)
+        ok = np.isfinite(vals) & np.isfinite(errs) & (errs > 0)
+        acc = {}
+        for t_i, x_i, e_i in zip(tgt[ok], vals[ok], errs[ok]):
+            w = 1.0 / e_i ** 2
+            a = acc.setdefault(t_i, [0.0, 0.0])
+            a[0] += w * x_i; a[1] += w
+        agg[col] = {k: (a[0] / a[1], (1.0 / a[1]) ** 0.5)   # weighted mean, its error
+                    for k, a in acc.items() if a[1] > 0}
+
+    have = set(agg['HV']) & set(agg[index_col])
+    print(f"    [mmfs loader] {catalog}: {len(exp_tab)} exposures -> "
+          f"{len(have)} stars with averaged HV and {index_col}")
+
+    ra_l, dec_l, v_l, ve_l, x_l, xe_l = [], [], [], [], [], []
+    mem_raw = (np.array([float(x) if str(x).strip() not in ('', '--', 'nan') else np.nan
+                         for x in star_tab['Mmb']])
+               if 'Mmb' in star_tab.colnames else None)
+    if mem_raw is not None and np.nanmax(mem_raw) > 1.0:
+        mem_raw = mem_raw / 100.0                   # VizieR stores Mmb as a percentage
+    for i, name in enumerate([str(x).strip() for x in star_tab['Target']]):
+        if name not in have:
+            continue
+        if mem_min is not None and mem_raw is not None:
+            if not (np.isfinite(mem_raw[i]) and mem_raw[i] >= mem_min):
+                continue
+        vm, ve = agg['HV'][name]
+        xm, xe = agg[index_col][name]
+        ra_l.append(star_tab['RAJ2000'][i]); dec_l.append(star_tab['DEJ2000'][i])
+        v_l.append(vm); ve_l.append(ve); x_l.append(xm); xe_l.append(xe)
+
+    def to_deg(seq, is_ra):
+        try:
+            return np.array(seq, float)
+        except (ValueError, TypeError):
+            from astropy.coordinates import Angle
+            import astropy.units as u
+            unit = u.hourangle if is_ra else u.deg
+            return Angle([str(s) for s in seq], unit=unit).to(u.deg).value
+
+    print(f"    [mmfs loader] retained {len(v_l)} stars"
+          + (f" after Mmb >= {mem_min}" if mem_min is not None else ""))
+    return (to_deg(ra_l, True), to_deg(dec_l, False),
+            np.array(v_l), np.array(ve_l), np.array(x_l), np.array(xe_l),
+            np.full(len(v_l), np.nan))
+
+
 def _fetch_tolstoy2023(catalog="J/A+A/675/A49", cols=None,
                        require_member=True, mem_keep=('m',), feh_quality_keep=None,
                        target_col=None, target_keep=None, mem_min=None):
@@ -2521,6 +2637,13 @@ def _fetch_tolstoy2023(catalog="J/A+A/675/A49", cols=None,
             if mem_min is not None and mcol is not None:      # membership PROBABILITY threshold
                 pv = np.array([float(x) if str(x).strip() not in ('', '--', 'nan') else np.nan
                                for x in t[mcol]])
+                # VizieR stores some membership columns (e.g. Walker+09 'Mmb') on a percentage
+                # scale [0,100] rather than [0,1]. Applying a fractional threshold directly to
+                # those would keep essentially the whole catalogue, foreground included.
+                if np.nanmax(pv) > 1.0:
+                    print(f"    [loader] membership '{mcol}' max = {np.nanmax(pv):.0f}: "
+                          "percentage scale detected; normalising to [0, 1].")
+                    pv = pv / 100.0
                 keep = np.isfinite(pv) & (pv >= mem_min)
                 sel &= keep
                 print(f"    [loader] membership '{mcol}' >= {mem_min}: {int(keep.sum())}/{len(t)} rows")
@@ -2741,7 +2864,7 @@ def ap25_run_full_mcmc(data, init=None, nwalkers=60, nsteps=4000, nsub=None,
     import os as _os
     resume_ok = bool(resume and backend is not None
                      and _os.path.exists(backend_file) and backend.iteration > 0)
-    pool = mp.Pool(nproc) if (nproc and nproc > 1) else None
+    pool = _make_pool(nproc)
     try:
         sampler = emcee.EnsembleSampler(nwalkers, NDIM, ap25_lnprob_full, args=(data,),
                                         moves=moves, pool=pool, backend=backend)
@@ -4581,7 +4704,7 @@ def run_continuous_chain(nwalkers=None, nsteps=2000, nproc=None, backend="cont.h
     bk = emcee.backends.HDFBackend(backend) if HAS_H5PY else None
     resume_ok = bool(resume and bk is not None and os.path.exists(backend) and bk.iteration > 0)
     print(f"  {'RESUMING' if resume_ok else 'STARTING'} {backend} | +{nsteps} steps, nproc={nproc}")
-    pool = mp.Pool(nproc) if nproc > 1 else None
+    pool = _make_pool(nproc)
     try:
         s = emcee.EnsembleSampler(nw, ndim, lnprob_fn, args=(data,),
                                   moves=moves, pool=pool, backend=bk)
@@ -4659,9 +4782,15 @@ WP11_TEX = [r'$f_{\rm sub}$', r'$r_{h,1}/r_{h,2}$', r'$\log_{10}r_{h,2}$',
             r'$\log\sigma^2_{Z,1}$', r'$\log\sigma^2_{Z,2}$',
             r'$\log\sigma^2_{V,1}$', r'$\log\sigma^2_{V,2}$']
 # priors: f_sub in (0,1); r_{h,1}/r_{h,2} in (0,1) [MR more concentrated]; log r_{h,2}/pc;
-# <[Fe/H]>_1; D[Fe/H]=<[Fe/H]>_1-<[Fe/H]>_2 > 0 [MR more metal-rich]; log sigma^2 (Z, V).
-WP11_PRIOR_LO = np.array([0.05, 0.02, 1.5, -3.0, 0.0, -5.0, -5.0, -1.0, -1.0])
-WP11_PRIOR_HI = np.array([0.95, 0.99, 3.5,  0.0, 2.0,  1.0,  1.0,  5.0,  5.0])
+# <Z>_1; DZ=<Z>_1-<Z>_2 > 0 [MR more metal-rich]; log sigma^2 (Z, V).
+# The two metallicity-location entries depend on the chemical indicator: [Fe/H] is negative
+# for a dwarf spheroidal, whereas the Walker+2009 Mg index is a pseudo-equivalent width in
+# Angstroms and is positive (Fornax: 0.10-0.95 over the 1st-99th percentile). Bounds written
+# for one indicator silently pin the fit against a boundary for the other, so they are taken
+# from the active galaxy's configuration.
+_WP11_Z_LO, _WP11_Z_HI = GAL.get('wp11_z_prior', ((-3.0, 0.0), (0.0, 2.0)))
+WP11_PRIOR_LO = np.array([0.05, 0.02, 1.5, _WP11_Z_LO[0], _WP11_Z_HI[0], -5.0, -5.0, -1.0, -1.0])
+WP11_PRIOR_HI = np.array([0.95, 0.99, 3.5, _WP11_Z_LO[1], _WP11_Z_HI[1],  1.0,  1.0,  5.0,  5.0])
 WP11_TRUTH = dict(f_sub=0.5, rh1_over_rh2=0.55, log_rh2_pc=np.log10(300.0),
                   feh1=-1.5, dfeh=0.5, log_s2feh1=np.log10(0.04), log_s2feh2=np.log10(0.09),
                   log_s2v1=np.log10(6.5**2), log_s2v2=np.log10(11.6**2))   # ~Sculptor-like
@@ -4677,15 +4806,46 @@ def wp11_load_data(catalog=None, feh_quality_keep=None):
     their measurement errors."""
     catalog = catalog or GAL['catalog']
     fqk = GAL['feh_quality_keep'] if feh_quality_keep is None else feh_quality_keep
-    ra, dec, vlos, verr, feh, feherr, _g = _fetch_tolstoy2023(
-        catalog, GAL.get('cols'), mem_keep=(GAL.get('mem_keep') or ('m',)),
-        require_member=bool(GAL.get('mem_keep')),
-        target_col=GAL.get('target_col'), target_keep=GAL.get('target_keep'), mem_min=GAL.get('mem_min'),
-        feh_quality_keep=(list(fqk) if fqk else None))
+    if GAL.get('mmfs_average'):          # rebuild the per-star sample from exposures
+        ra, dec, vlos, verr, feh, feherr, _g = _fetch_mmfs_averaged(
+            catalog, galaxy_prefixes=GAL.get('target_keep', ()),
+            index_col=str(GAL['cols']['feh']).strip('<>'),
+            mem_min=GAL.get('mem_min'))
+    else:
+        ra, dec, vlos, verr, feh, feherr, _g = _fetch_tolstoy2023(
+            catalog, GAL.get('cols'), mem_keep=(GAL.get('mem_keep') or ('m',)),
+            require_member=bool(GAL.get('mem_keep')),
+            target_col=GAL.get('target_col'), target_keep=GAL.get('target_keep'),
+            mem_min=GAL.get('mem_min'),
+            feh_quality_keep=(list(fqk) if fqk else None))
     good = np.isfinite(vlos) & np.isfinite(feh) & np.isfinite(verr) & np.isfinite(feherr)
     R_kpc = _semi_major_axis_radius(ra[good], dec[good])
     return dict(R_pc=R_kpc * 1000.0, vlos=vlos[good] - V_SYS,
                 feh=feh[good], everr=verr[good], efeh=feherr[good])
+
+
+def _pool_init(galaxy_name):
+    """Initializer for multiprocessing workers: restore the parent's active galaxy.
+
+    On spawn-based platforms (Windows, macOS) each worker re-imports this module fresh, so
+    module-level state set at runtime -- GAL and everything set_galaxy derives from it:
+    V_SYS, RE_MR/RE_MP, FRAC_MR, and the WP11 prior bounds -- reverts to the Sculptor
+    default. A likelihood evaluated in a worker would then use the wrong galaxy's priors and
+    systemic velocity while the parent believes it is fitting another target. For Fornax this
+    puts every walker outside the worker-side prior, so every proposal returns -inf, the
+    ensemble state is poisoned at the first step, and the chain sits frozen for the whole run
+    while still reporting medians drawn from the initial ball.
+    """
+    if galaxy_name and galaxy_name.strip().lower() != GAL['name'].strip().lower():
+        set_galaxy(galaxy_name)
+
+
+def _make_pool(nproc):
+    """Worker pool with the active galaxy propagated to every worker (see _pool_init)."""
+    if not nproc or nproc <= 1:
+        return None
+    import multiprocessing as _mp
+    return _mp.Pool(nproc, initializer=_pool_init, initargs=(GAL['name'],))
 
 
 def wp11_lnprior(theta):
@@ -4897,7 +5057,7 @@ def _wp11_fit_gamma(data, nsteps=8000, nproc=None, seed=7):
     p0 = np.clip(wp11_truth_vector() + scale * rng.standard_normal((nw, ndim)),
                  WP11_PRIOR_LO + 1e-6, WP11_PRIOR_HI - 1e-6)
     moves = [(emcee.moves.StretchMove(a=2.0), 0.7), (emcee.moves.DEMove(), 0.3)]
-    pool = mp.Pool(nproc) if (nproc and nproc > 1) else None
+    pool = _make_pool(nproc)
     try:
         s = emcee.EnsembleSampler(nw, ndim, wp11_lnprob, args=(data,), moves=moves, pool=pool)
         s.run_mcmc(p0, nsteps, progress=False)
@@ -5100,18 +5260,52 @@ def run_wp11(nwalkers=64, nsteps=6000, nproc=None, backend="wp11.h5", resume=Non
     ndim = WP11_NDIM; nw = max(4 * ndim, nwalkers)                # more walkers for a stiff 9-D space
     rng = np.random.default_rng(7)
     init = wp11_truth_vector()
+    # WP11_TRUTH is a Sculptor-like starting point: r_h,2 = 300 pc, sigma_V = 6.5/11.6 km/s
+    # and an [Fe/H] chemical scale. Applied to a galaxy with different radial, kinematic or
+    # chemical scales those values sit far out in the likelihood tail; every walker then
+    # starts in a region of uniformly terrible likelihood, no proposal is ever accepted, and
+    # the ensemble never moves (acceptance ~0). Seed the scale parameters from the data
+    # instead whenever the default falls outside the active prior or badly mismatches the
+    # sample. The two subcomponents are offset around the global values so the mixture starts
+    # separated rather than degenerate.
+    if not use_mock:
+        z = np.asarray(data['feh'], float)
+        R = np.asarray(data['R_pc'], float)
+        V = np.asarray(data['vlos'], float)
+        ok = np.isfinite(z) & np.isfinite(R) & np.isfinite(V)
+        z, R, V = z[ok], R[ok], V[ok]
+        chem_outside = not (WP11_PRIOR_LO[3] <= init[3] <= WP11_PRIOR_HI[3])
+        scale_off = abs(np.log10(np.median(R)) - init[2]) > 0.15      # >~40 per cent in r_h
+        if z.size and (chem_outside or scale_off):
+            q25, q75 = np.percentile(z, [25.0, 75.0])
+            s2v = max(np.var(V, ddof=1), 1.0)
+            init = init.copy()
+            init[2] = np.clip(np.log10(np.median(R)), WP11_PRIOR_LO[2], WP11_PRIOR_HI[2])
+            init[3] = np.clip(q75, WP11_PRIOR_LO[3] + 1e-3, WP11_PRIOR_HI[3] - 1e-3)
+            init[4] = np.clip(q75 - q25, WP11_PRIOR_LO[4] + 1e-3, WP11_PRIOR_HI[4] - 1e-3)
+            init[5] = init[6] = np.log10(max(np.var(z, ddof=1), 1e-4))
+            init[7] = np.log10(0.7 * s2v)      # metal-rich: colder
+            init[8] = np.log10(1.3 * s2v)      # metal-poor: hotter
+            print(f"  [init] seeding from the data: log r_h,2={init[2]:.3f} "
+                  f"(median R={np.median(R):.0f} pc), <Z>_1={init[3]:.3f}, DZ={init[4]:.3f}, "
+                  f"sigma_V={np.sqrt(10**init[7]):.1f}/{np.sqrt(10**init[8]):.1f} km/s")
     p0 = None
-    if not (resume and HAS_H5PY and os.path.exists(backend)):     # tight Gaussian ball around the solution
-        scale = np.array([0.03, 0.02, 0.02, 0.03, 0.03, 0.08, 0.08, 0.04, 0.04])
+    if not (resume and HAS_H5PY and os.path.exists(backend)):     # Gaussian ball around the seed
+        scale = np.array([0.06, 0.04, 0.04, 0.06, 0.06, 0.12, 0.12, 0.08, 0.08])
         p0 = np.clip(init + scale * rng.standard_normal((nw, ndim)),
                      WP11_PRIOR_LO + 1e-6, WP11_PRIOR_HI - 1e-6)
-    # affine-invariant stretch move (robust; the DE mix collapsed the ensemble here) + a
-    # little differential-evolution for the correlated directions
-    moves = [(emcee.moves.StretchMove(a=2.0), 0.7), (emcee.moves.DEMove(), 0.3)]
+    # Pure affine-invariant stretch. Mixing in a DEMove collapses the ensemble on this
+    # posterior: the differential-evolution proposal is built from differences between
+    # walkers, so from a tight initial ball in nine stiff dimensions it proposes points
+    # essentially on top of the current ones. On a likelihood of order -3e4 the resulting
+    # lnpdiff underflows to nan at the first step, every acceptance test then fails, and the
+    # chain sits frozen at its starting positions for the whole run while still reporting
+    # plausible-looking medians. The stretch move alone gives ~0.4 acceptance here.
+    moves = [(emcee.moves.StretchMove(a=2.0), 1.0)]
     bk = emcee.backends.HDFBackend(backend) if HAS_H5PY else None
     resume_ok = bool(resume and bk is not None and os.path.exists(backend) and bk.iteration > 0)
     print(f"  {'RESUMING' if resume_ok else 'STARTING'} {backend} | {nw} walkers, +{nsteps} steps, nproc={nproc}")
-    pool = mp.Pool(nproc) if nproc > 1 else None
+    pool = _make_pool(nproc)
     try:
         s = emcee.EnsembleSampler(nw, ndim, wp11_lnprob, args=(data,), moves=moves, pool=pool, backend=bk)
         if resume_ok:
