@@ -187,6 +187,16 @@ GALAXIES = {
         # median of 0.59. The default [Fe/H] prior bounds ([-3,0] for the location) would pin
         # the metal-rich mean against its upper edge and prevent the mixture from separating.
         wp11_z_prior=((0.0, 1.2), (0.0, 1.0)),
+        # The MMFS catalogue is raw: WP11 fit f_mem = 0.96 for Fornax, i.e. ~4 per cent
+        # contamination. Retain non-members and model them non-parametrically (Sect. 3.5 of
+        # WP11) rather than cutting on Mmb, which would force ~100 foreground stars into one
+        # of the two Plummer subcomponents and distort the mixture.
+        wp11_foreground=True,
+        # Reconstruct WP11's spectroscopic completeness w(R) against a Gaia DR3 photometric
+        # parent (their target catalogue is unpublished). MMFS fibre allocation undersamples
+        # the crowded centre, so without this correction both fitted half-light radii are
+        # pulled toward the sample median and their ratio is compressed.
+        wp11_selection=True,
         wp11_xlim=(2.5, 3.1), wp11_ylim=(7.0, 8.4)),     # Fornax: larger radii/masses
 }
 GAL = GALAXIES['sculptor']                               # active galaxy (default)
@@ -2537,7 +2547,7 @@ def _fetch_mmfs_averaged(catalog="J/AJ/137/3100", galaxy_prefixes=('for', 'fnx')
     print(f"    [mmfs loader] {catalog}: {len(exp_tab)} exposures -> "
           f"{len(have)} stars with averaged HV and {index_col}")
 
-    ra_l, dec_l, v_l, ve_l, x_l, xe_l = [], [], [], [], [], []
+    ra_l, dec_l, v_l, ve_l, x_l, xe_l, mem_l = [], [], [], [], [], [], []
     mem_raw = (np.array([float(x) if str(x).strip() not in ('', '--', 'nan') else np.nan
                          for x in star_tab['Mmb']])
                if 'Mmb' in star_tab.colnames else None)
@@ -2553,6 +2563,7 @@ def _fetch_mmfs_averaged(catalog="J/AJ/137/3100", galaxy_prefixes=('for', 'fnx')
         xm, xe = agg[index_col][name]
         ra_l.append(star_tab['RAJ2000'][i]); dec_l.append(star_tab['DEJ2000'][i])
         v_l.append(vm); ve_l.append(ve); x_l.append(xm); xe_l.append(xe)
+        mem_l.append(mem_raw[i] if mem_raw is not None else np.nan)
 
     def to_deg(seq, is_ra):
         try:
@@ -2564,10 +2575,11 @@ def _fetch_mmfs_averaged(catalog="J/AJ/137/3100", galaxy_prefixes=('for', 'fnx')
             return Angle([str(s) for s in seq], unit=unit).to(u.deg).value
 
     print(f"    [mmfs loader] retained {len(v_l)} stars"
-          + (f" after Mmb >= {mem_min}" if mem_min is not None else ""))
+          + (f" after Mmb >= {mem_min}" if mem_min is not None
+             else " (no membership cut; non-members retained for the foreground model)"))
     return (to_deg(ra_l, True), to_deg(dec_l, False),
             np.array(v_l), np.array(ve_l), np.array(x_l), np.array(xe_l),
-            np.full(len(v_l), np.nan))
+            np.array(mem_l))
 
 
 def _fetch_tolstoy2023(catalog="J/A+A/675/A49", cols=None,
@@ -2726,6 +2738,67 @@ def gaia_rgb_parent(radius_deg=0.9, g_range=(17.0, 20.5), pm=None, pm_tol=0.6,
 
 
 def _kde(x, bw):
+    from scipy.stats import gaussian_kde
+    return gaussian_kde(np.asarray(x, float), bw_method=bw)
+
+
+def wp11_photometric_parent(radius_deg=0.6, g_range=(17.0, 20.5), bp_rp_range=None):
+    """Photometric RGB-candidate parent for the active galaxy, standing in for the target
+    catalogue behind WP11's spectroscopic completeness w(R) = dN_obs/dN_cand (their Eq. 4).
+
+    W07 selected MMFS targets from V, I colour-magnitude boxes on each dwarf's red giant
+    branch, and that candidate list is not published; this reconstructs an equivalent parent
+    from Gaia DR3, which covers the field completely to G ~ 20. NO astrometric cleaning is
+    applied: WP11's denominator counts photometric candidates including Milky Way
+    interlopers, which is why they simultaneously fit a member fraction f_mem < 1.
+
+    This is a reconstruction, not the original selection, and the magnitude range is an
+    approximate translation between (V, I) and Gaia G. Served via VizieR (I/355/gaiadr3)
+    rather than the ESA TAP endpoint, which times out on cone searches of this size.
+    Returns (R_pc, G).
+    """
+    from astroquery.vizier import Vizier
+    from astropy.coordinates import SkyCoord
+    import astropy.units as u
+    cols = ['RA_ICRS', 'DE_ICRS', 'Gmag'] + (['BP-RP'] if bp_rp_range else [])
+    filt = {'Gmag': f'{g_range[0]}..{g_range[1]}'}
+    if bp_rp_range:
+        filt['BP-RP'] = f'{bp_rp_range[0]}..{bp_rp_range[1]}'
+    V = Vizier(columns=cols, column_filters=filt, row_limit=-1)
+    centre = SkyCoord(RA0_DEG, DEC0_DEG, unit='deg')
+    res = V.query_region(centre, radius=radius_deg * u.deg, catalog='I/355/gaiadr3')
+    if not len(res):
+        raise RuntimeError('VizieR returned no Gaia DR3 rows for this field')
+    t = res[0]
+    ra = np.array(t['RA_ICRS'], float); dec = np.array(t['DE_ICRS'], float)
+    G = np.array(t['Gmag'], float)
+    ok = np.isfinite(ra) & np.isfinite(dec) & np.isfinite(G)
+    R_pc = _semi_major_axis_radius(ra[ok], dec[ok]) * 1000.0
+    print(f"  [parent] Gaia DR3 via VizieR: {len(R_pc)} photometric candidates within "
+          f"{radius_deg} deg of {GAL['name']} (G in {g_range}); median projected radius "
+          f"{np.median(R_pc):.0f} pc")
+    return R_pc, G[ok]
+
+
+def wp11_attach_selection(data, parent_R_pc, bw=0.25, n_grid=400):
+    """Attach WP11's spectroscopic completeness w(R) to a WP11 data dict.
+
+    Stores the per-star value w(R_i) and w on a radial grid; the grid is needed because with
+    a non-uniform selection the Plummer radial pdf is no longer normalised, so each
+    subcomponent term must be divided by \\int w(R) p_k(R) dR, which depends on the fitted
+    half-light radius and must therefore be evaluated inside the likelihood.
+    """
+    spec_R = np.asarray(data['R_pc'], float)
+    Omega = build_radial_selection(spec_R, np.asarray(parent_R_pc, float), bw=bw)
+    Rg = np.linspace(1.0, max(spec_R.max(), np.max(parent_R_pc)) * 1.05, n_grid)
+    data = dict(data)
+    data['w_star'] = np.clip(Omega(spec_R), 1e-4, None)
+    data['R_grid'] = Rg
+    data['w_grid'] = np.clip(Omega(Rg), 1e-4, None)
+    print(f"  [selection] w(R) attached: per-star range "
+          f"[{data['w_star'].min():.3f}, {data['w_star'].max():.3f}], "
+          f"median {np.median(data['w_star']):.3f}")
+    return data
     from scipy.stats import gaussian_kde
     return gaussian_kde(np.asarray(x, float), bw_method=bw)
 
@@ -4797,20 +4870,63 @@ WP11_TRUTH = dict(f_sub=0.5, rh1_over_rh2=0.55, log_rh2_pc=np.log10(300.0),
 
 
 def wp11_truth_vector():
-    return np.array([WP11_TRUTH[k] for k in WP11_PARAM_NAMES])
+    """Starting point in the ACTIVE parameterisation. f_mem defaults to 0.9 when the
+    foreground model is in use; WP11 fit 0.96 (Fornax) and 0.88 (Sculptor)."""
+    return np.array([WP11_TRUTH.get(k, 0.9) for k in WP11_PARAM_NAMES])
+
+
+def _wp11_foreground_pdfs(R, V, Z, eV, eZ, p_mem, k_spatial):
+    """Per-star foreground probability density, following Walker & Penarrubia (2011) Sect. 3.5.
+
+    The Milky Way contamination is not given a parametric form. Instead its distributions of
+    projected radius, velocity and reduced Mg index are estimated directly from the observed
+    sample, smoothing each star's contribution by its probability of NON-membership
+    (1 - P_mem, from the Walker et al. 2009 expectation-maximisation algorithm). The velocity
+    and index kernels are the per-star measurement errors; the spatial kernel bandwidth is
+    the composite half-light radius, chosen by WP11 so that no new spatial scale is
+    introduced beyond those already present in the data.
+
+    Because these densities depend only on the data, they are evaluated once per star and
+    reused at every likelihood call.
+    """
+    w = 1.0 - np.clip(np.asarray(p_mem, float), 0.0, 1.0)
+    w = np.where(np.isfinite(w), w, 0.0)
+    if w.sum() <= 0:
+        return None
+    def smooth(x, bw_per_star, xq):
+        d = xq[:, None] - np.asarray(x, float)[None, :]
+        s = np.asarray(bw_per_star, float)[None, :]
+        s = np.where(np.isfinite(s) & (s > 0), s, np.nanmedian(bw_per_star))
+        k = np.exp(-0.5 * (d / s) ** 2) / (s * np.sqrt(2.0 * np.pi))
+        return (k * w[None, :]).sum(axis=1) / w.sum()
+    pR = smooth(R, np.full(len(R), float(k_spatial)), np.asarray(R, float))
+    pV = smooth(V, eV, np.asarray(V, float))
+    pZ = smooth(Z, eZ, np.asarray(Z, float))
+    print(f"    [foreground] non-parametric MW model from {w.sum():.0f} non-member-weighted "
+          f"stars of {len(w)} (spatial bandwidth {k_spatial:.0f} pc)")
+    return pR * pV * pZ
 
 
 def wp11_load_data(catalog=None, feh_quality_keep=None):
-    """Active galaxy's member stars: projected (elliptical) radius in pc, rest-frame
-    velocity, metallicity indicator ([Fe/H] for Sculptor; Mg index W' for Fornax), and
-    their measurement errors."""
+    """Active galaxy's stars: projected (elliptical) radius in pc, rest-frame velocity,
+    metallicity indicator ([Fe/H] for Sculptor; Mg index W' for Fornax), and their
+    measurement errors.
+
+    Where the catalogue supplies a per-star membership probability, non-members are RETAINED
+    and a non-parametric foreground density is attached (key 'pmw'); the member fraction
+    f_mem is then a free parameter of the fit, as in WP11. Where it does not -- e.g. the
+    Tolstoy et al. (2023) Sculptor catalogue, which is already cleaned against Gaia
+    astrometry -- the sample is treated as pure members and f_mem is not sampled.
+    """
+    global WP11_NDIM, WP11_PARAM_NAMES, WP11_TEX, WP11_PRIOR_LO, WP11_PRIOR_HI
     catalog = catalog or GAL['catalog']
     fqk = GAL['feh_quality_keep'] if feh_quality_keep is None else feh_quality_keep
+    mem = None
     if GAL.get('mmfs_average'):          # rebuild the per-star sample from exposures
-        ra, dec, vlos, verr, feh, feherr, _g = _fetch_mmfs_averaged(
+        ra, dec, vlos, verr, feh, feherr, mem = _fetch_mmfs_averaged(
             catalog, galaxy_prefixes=GAL.get('target_keep', ()),
             index_col=str(GAL['cols']['feh']).strip('<>'),
-            mem_min=GAL.get('mem_min'))
+            mem_min=(None if GAL.get('wp11_foreground') else GAL.get('mem_min')))
     else:
         ra, dec, vlos, verr, feh, feherr, _g = _fetch_tolstoy2023(
             catalog, GAL.get('cols'), mem_keep=(GAL.get('mem_keep') or ('m',)),
@@ -4820,8 +4936,44 @@ def wp11_load_data(catalog=None, feh_quality_keep=None):
             feh_quality_keep=(list(fqk) if fqk else None))
     good = np.isfinite(vlos) & np.isfinite(feh) & np.isfinite(verr) & np.isfinite(feherr)
     R_kpc = _semi_major_axis_radius(ra[good], dec[good])
-    return dict(R_pc=R_kpc * 1000.0, vlos=vlos[good] - V_SYS,
-                feh=feh[good], everr=verr[good], efeh=feherr[good])
+    out = dict(R_pc=R_kpc * 1000.0, vlos=vlos[good] - V_SYS,
+               feh=feh[good], everr=verr[good], efeh=feherr[good])
+
+    use_fg = bool(GAL.get('wp11_foreground')) and mem is not None and np.isfinite(mem).any()
+    if use_fg:
+        out['pmw'] = _wp11_foreground_pdfs(
+            out['R_pc'], out['vlos'], out['feh'], out['everr'], out['efeh'],
+            mem[good], k_spatial=float(np.median(out['R_pc'])))
+        use_fg = out['pmw'] is not None
+    if GAL.get('wp11_selection'):
+        try:
+            pR, _pG = wp11_photometric_parent()
+            out = wp11_attach_selection(out, pR)
+        except Exception as exc:                 # network or query failure: proceed uniform
+            print(f"  [selection] parent query failed ({type(exc).__name__}: {exc}); "
+                  "falling back to w(R)=1")
+    _wp11_set_ndim(with_fmem=use_fg)
+    return out
+
+
+def _wp11_set_ndim(with_fmem):
+    """Extend the parameter vector with f_mem when a foreground model is in use."""
+    global WP11_NDIM, WP11_PARAM_NAMES, WP11_TEX, WP11_PRIOR_LO, WP11_PRIOR_HI
+    base_names = ['f_sub', 'rh1_over_rh2', 'log_rh2_pc', 'feh1', 'dfeh',
+                  'log_s2feh1', 'log_s2feh2', 'log_s2v1', 'log_s2v2']
+    base_tex = [r'$f_{\rm sub}$', r'$r_{h,1}/r_{h,2}$', r'$\log_{10}r_{h,2}$',
+                r'$\langle Z\rangle_1$', r'$\Delta Z$',
+                r'$\log\sigma^2_{Z,1}$', r'$\log\sigma^2_{Z,2}$',
+                r'$\log\sigma^2_{V,1}$', r'$\log\sigma^2_{V,2}$']
+    zlo, zhi = GAL.get('wp11_z_prior', ((-3.0, 0.0), (0.0, 2.0)))
+    lo = [0.05, 0.02, 1.5, zlo[0], zhi[0], -5.0, -5.0, -1.0, -1.0]
+    hi = [0.95, 0.99, 3.5, zlo[1], zhi[1],  1.0,  1.0,  5.0,  5.0]
+    if with_fmem:                       # f_mem last, so indices 0-8 are unchanged
+        base_names, base_tex = base_names + ['f_mem'], base_tex + [r'$f_{\rm mem}$']
+        lo, hi = lo + [0.05], hi + [1.0]
+    WP11_PARAM_NAMES, WP11_TEX = base_names, base_tex
+    WP11_PRIOR_LO, WP11_PRIOR_HI = np.array(lo), np.array(hi)
+    WP11_NDIM = len(base_names)
 
 
 def _pool_init(galaxy_name):
@@ -4849,16 +5001,40 @@ def _make_pool(nproc):
 
 
 def wp11_lnprior(theta):
-    if np.any(theta < WP11_PRIOR_LO) or np.any(theta > WP11_PRIOR_HI):
+    """Uniform priors within the bounds of the active parameterisation.
+
+    The bounds are rebuilt by set_galaxy(), which spawn-based multiprocessing workers run at
+    import; a worker therefore holds the 9-parameter (members-only) bounds even when the
+    parent has extended the vector with f_mem after loading a catalogue with a foreground
+    model. Rather than rely on that state matching, the length is taken from theta itself and
+    the f_mem bound applied explicitly.
+    """
+    theta = np.atleast_1d(theta)
+    n = min(len(theta), len(WP11_PRIOR_LO))
+    if np.any(theta[:n] < WP11_PRIOR_LO[:n]) or np.any(theta[:n] > WP11_PRIOR_HI[:n]):
         return -np.inf
+    if len(theta) > len(WP11_PRIOR_LO):          # trailing f_mem, in (0, 1]
+        if not (0.05 <= theta[-1] <= 1.0):
+            return -np.inf
     return 0.0
 
 
 def wp11_lnlike(theta, data):
-    """WP11 two-subcomponent mixture likelihood (Eq.14, members-only; selection w(R)=1 so the
-    Plummer radial pdf is already normalised). Each star: sum over MR/MP of the product of
-    Plummer-radial x Gaussian-velocity x Gaussian-metallicity probabilities."""
-    f_sub, ratio, log_rh2, feh1, dfeh, ls2f1, ls2f2, ls2v1, ls2v2 = theta
+    """WP11 two-subcomponent mixture likelihood (their Eq. 14). Each star contributes the
+    member term -- a sum over the metal-rich and metal-poor subcomponents of the product of
+    Plummer-radial, Gaussian-velocity and Gaussian-metallicity probabilities -- plus, where a
+    foreground model is attached, a non-member term weighted by (1 - f_mem):
+
+        L_i = f_mem [f_sub p_1 + (1-f_sub) p_2] + (1 - f_mem) p_MW,i
+
+    with p_MW estimated non-parametrically from the data (see _wp11_foreground_pdfs). The
+    selection function is taken as w(R)=1, so the Plummer radial pdf is already normalised;
+    WP11 instead weight by their spectroscopic completeness, which is not recoverable from
+    the published catalogue.
+    """
+    f_sub, ratio, log_rh2, feh1, dfeh, ls2f1, ls2f2, ls2v1, ls2v2 = theta[:9]
+    pmw = data.get('pmw')
+    f_mem = float(theta[9]) if (pmw is not None and len(theta) > 9) else 1.0
     R, V, feh = data['R_pc'], data['vlos'], data['feh']
     eV, efeh = data['everr'], data['efeh']
     rh2 = 10.0 ** log_rh2; rh1 = ratio * rh2
@@ -4867,11 +5043,27 @@ def wp11_lnlike(theta, data):
     s2v1, s2v2 = 10.0 ** ls2v1, 10.0 ** ls2v2
     pR1 = 2.0 * R / rh1 ** 2 / (1.0 + R ** 2 / rh1 ** 2) ** 2       # Plummer projected pdf (Eq.8)
     pR2 = 2.0 * R / rh2 ** 2 / (1.0 + R ** 2 / rh2 ** 2) ** 2
+    w = data.get('w_star')
+    if w is not None:
+        # With a non-uniform selection the Plummer pdf is no longer normalised over the
+        # observed sample: each subcomponent term carries w(R_i) and is divided by
+        # \int w(R) p_k(R) dR (WP11 Eq. 14), which depends on the fitted half-light radius.
+        Rg, wg = data['R_grid'], data['w_grid']
+        g1 = 2.0 * Rg / rh1 ** 2 / (1.0 + Rg ** 2 / rh1 ** 2) ** 2
+        g2 = 2.0 * Rg / rh2 ** 2 / (1.0 + Rg ** 2 / rh2 ** 2) ** 2
+        Z1 = np.trapezoid(wg * g1, Rg) if hasattr(np, 'trapezoid') else np.trapz(wg * g1, Rg)
+        Z2 = np.trapezoid(wg * g2, Rg) if hasattr(np, 'trapezoid') else np.trapz(wg * g2, Rg)
+        if not (Z1 > 0 and Z2 > 0):
+            return -np.inf
+        pR1 = w * pR1 / Z1
+        pR2 = w * pR2 / Z2
     pV1 = _gauss(V, 0.0, np.sqrt(s2v1 + eV ** 2))                   # rest-frame velocity (Eq.9)
     pV2 = _gauss(V, 0.0, np.sqrt(s2v2 + eV ** 2))
     pZ1 = _gauss(feh, feh1, np.sqrt(s2f1 + efeh ** 2))             # metallicity (Eq.11)
     pZ2 = _gauss(feh, feh2, np.sqrt(s2f2 + efeh ** 2))
     L = f_sub * pR1 * pV1 * pZ1 + (1.0 - f_sub) * pR2 * pV2 * pZ2
+    if pmw is not None:
+        L = f_mem * L + (1.0 - f_mem) * pmw
     if np.any(L <= 0) or np.any(~np.isfinite(L)):
         return -np.inf
     return float(np.sum(np.log(L)))
@@ -5053,7 +5245,8 @@ def _wp11_fit_gamma(data, nsteps=8000, nproc=None, seed=7):
     import emcee, multiprocessing as mp, os
     ndim = WP11_NDIM; nw = max(4 * ndim, 48)
     rng = np.random.default_rng(seed)
-    scale = np.array([0.03, 0.02, 0.02, 0.03, 0.03, 0.08, 0.08, 0.04, 0.04])
+    scale = np.array([0.03, 0.02, 0.02, 0.03, 0.03, 0.08, 0.08, 0.04, 0.04]
+                     + [0.02] * (ndim - 9))
     p0 = np.clip(wp11_truth_vector() + scale * rng.standard_normal((nw, ndim)),
                  WP11_PRIOR_LO + 1e-6, WP11_PRIOR_HI - 1e-6)
     moves = [(emcee.moves.StretchMove(a=2.0), 0.7), (emcee.moves.DEMove(), 0.3)]
@@ -5253,10 +5446,13 @@ def run_wp11(nwalkers=64, nsteps=6000, nproc=None, backend="wp11.h5", resume=Non
     print("=" * 64)
     if use_mock:
         data, Gamma_true = wp11_generate_mock(seed=mock_seed)
+        _wp11_set_ndim(with_fmem=False)      # synthetic data are pure members by construction
         print(f"  MOCK: {len(data['R_pc'])} stars; true Gamma = {Gamma_true:.2f}")
     else:
         data = wp11_load_data(catalog=catalog, feh_quality_keep=feh_quality_keep)
-        print(f"  real: {len(data['R_pc'])} member stars")
+        print(f"  real: {len(data['R_pc'])} stars"
+              + (f" ({WP11_NDIM}-parameter fit, foreground modelled)"
+                 if WP11_NDIM > 9 else " (members)"))
     ndim = WP11_NDIM; nw = max(4 * ndim, nwalkers)                # more walkers for a stiff 9-D space
     rng = np.random.default_rng(7)
     init = wp11_truth_vector()
@@ -5278,7 +5474,10 @@ def run_wp11(nwalkers=64, nsteps=6000, nproc=None, backend="wp11.h5", resume=Non
         scale_off = abs(np.log10(np.median(R)) - init[2]) > 0.15      # >~40 per cent in r_h
         if z.size and (chem_outside or scale_off):
             q25, q75 = np.percentile(z, [25.0, 75.0])
-            s2v = max(np.var(V, ddof=1), 1.0)
+            # With non-members retained, the raw velocity variance is inflated by the broad
+            # foreground distribution; a sigma-clip recovers the member-dominated scale.
+            Vc = V[np.abs(V - np.median(V)) < 3.0 * 1.4826 * np.median(np.abs(V - np.median(V)))]
+            s2v = max(np.var(Vc if Vc.size > 50 else V, ddof=1), 1.0)
             init = init.copy()
             init[2] = np.clip(np.log10(np.median(R)), WP11_PRIOR_LO[2], WP11_PRIOR_HI[2])
             init[3] = np.clip(q75, WP11_PRIOR_LO[3] + 1e-3, WP11_PRIOR_HI[3] - 1e-3)
@@ -5291,7 +5490,8 @@ def run_wp11(nwalkers=64, nsteps=6000, nproc=None, backend="wp11.h5", resume=Non
                   f"sigma_V={np.sqrt(10**init[7]):.1f}/{np.sqrt(10**init[8]):.1f} km/s")
     p0 = None
     if not (resume and HAS_H5PY and os.path.exists(backend)):     # Gaussian ball around the seed
-        scale = np.array([0.06, 0.04, 0.04, 0.06, 0.06, 0.12, 0.12, 0.08, 0.08])
+        scale = np.array([0.06, 0.04, 0.04, 0.06, 0.06, 0.12, 0.12, 0.08, 0.08]
+                         + [0.03] * (ndim - 9))          # last entry: f_mem, if sampled
         p0 = np.clip(init + scale * rng.standard_normal((nw, ndim)),
                      WP11_PRIOR_LO + 1e-6, WP11_PRIOR_HI - 1e-6)
     # Pure affine-invariant stretch. Mixing in a DEMove collapses the ensemble on this
