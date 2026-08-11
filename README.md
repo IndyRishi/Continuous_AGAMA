@@ -120,7 +120,10 @@ python continuous_agama.py --biasgate       # continuous-truth mocks: split vs c
 python continuous_agama.py --revgate        # discrete-truth mocks: the reverse comparison
 python continuous_agama.py --gatediag       # null and label-scramble controls (geometry vs chemistry)
 python continuous_agama.py --shrinkage      # prior shrinkage vs chain length
+python continuous_agama.py --biasconv       # mean bias vs number of mock realisations
 ```
+
+`--overview` writes its figure and exits; the others can be combined with `--galaxy`.
 
 ### Dark-matter slope measurements (MCMC; resume by re-running)
 
@@ -151,6 +154,7 @@ python continuous_agama.py --gmmdiag        # PM mixture identifiability diagnos
 python continuous_agama.py --continuous --mock     # recover known gamma, k_J
 python continuous_agama.py --wp11 --mock           # WP11 recovery on a known-Gamma mock
 python continuous_agama.py --crosscheck --repo <path/to/gravsphere>   # vs reference GravSphere
+python continuous_agama.py --crosscheck --repo <path> --mcmc          # + end-to-end posterior equivalence
 ```
 
 ### Common flags
@@ -158,8 +162,9 @@ python continuous_agama.py --crosscheck --repo <path/to/gravsphere>   # vs refer
 `--steps N` (MCMC steps to add), `--walkers N`, `--nproc N` (parallel processes), `--K N`
 (metallicity DF nodes for `--continuous`), `--nsub N` (fit a random subsample; omit for the
 full sample), `--backend FILE.h5` (checkpoint), `--no-resume`, `--galaxy {sculptor,fornax}`,
-`--mock`, `--seed N` (walker initialisation), `--gammaprior LO HI` (Jeans prior bounds, for
-the prior-sensitivity test), `--astar KPC` (GravSphere tracer scale).
+`--mock`, `--seed N` (walker initialisation), `--mockseed N` (mock draw), `--gammaprior LO HI`
+(Jeans prior bounds, for the prior-sensitivity test), `--astar KPC` (GravSphere tracer scale),
+`--selection {none,radial,2d}` (AP24-style completeness for the continuous DF).
 
 **MCMC runs checkpoint every step** to an HDF5 backend and **resume** on re-launch -- run the
 same command until the convergence report stops reporting `NOT CONVERGED`. To check progress
@@ -264,10 +269,10 @@ table, using the Mg spectral index W' as the chemical discriminant, D = 147 kpc.
 
 ## Repository layout
 
-- `continuous_agama.py` -- the complete pipeline (all frameworks and figures).
-- `requirements.txt` -- dependencies.
-- `crosscheck_gravsphere.py`, `run_phase5.py`, `selection_function.py` -- thin
-  backward-compatibility shims around the main module.
+- `continuous_agama.py` -- the complete pipeline: all four frameworks, the mock
+  experiments, the cross-validation against the reference GravSphere, and every figure.
+- `requirements.txt` -- pinned dependencies.
+- `README.md` -- this file.
 
 ---
 
