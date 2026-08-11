@@ -197,6 +197,9 @@ GALAXIES = {
         # the crowded centre, so without this correction both fitted half-light radii are
         # pulled toward the sample median and their ratio is compressed.
         wp11_selection=True,
+        # A magnitude cut alone admits main-sequence foreground; restricting BP-RP narrows
+        # the parent toward the red giant branch that W07 actually targeted.
+        wp11_parent_kw=dict(radius_deg=0.6, g_range=(17.0, 20.5), bp_rp_range=(0.7, 2.2)),
         wp11_xlim=(2.5, 3.1), wp11_ylim=(7.0, 8.4)),     # Fornax: larger radii/masses
 }
 GAL = GALAXIES['sculptor']                               # active galaxy (default)
@@ -3751,7 +3754,7 @@ def run_shrinkage_test(gamma_true=(0.4, 1.0), nsteps_grid=(400, 1600, 6400), n_r
 
       PRIOR SHRINKAGE -- the sigma_los likelihood is nearly flat in gamma (Section 5.1), so the
         posterior is pulled toward the prior median regardless of chain length. If this is the
-        cause, run_dm5_chain() suffers it too, and the reported gamma = 0.78 is BIASED HIGH:
+        cause, run_dm5_chain() suffers it too, and the reported gamma would be BIASED HIGH:
         the true slope would be lower, i.e. MORE CORED. This is a systematic on a headline
         number and it runs in the paper's favour, which is exactly why it must be found here
         rather than by a referee.
@@ -3764,6 +3767,14 @@ def run_shrinkage_test(gamma_true=(0.4, 1.0), nsteps_grid=(400, 1600, 6400), n_r
     THE TEST: re-run the NULL at increasing chain lengths. Bias that SHRINKS toward zero as
     nsteps grows was non-convergence. Bias that PLATEAUS is the prior, and it applies to every
     sigma_los fit in the paper including run_dm5_chain().
+
+    OUTCOME (resolved): the bias plateaus, so it is prior shrinkage, at a fraction f = 0.418
+    measured from the gamma_true = 0.4 mocks. But f overstates the effect on the real fit --
+    refitting the data itself under a prior with median 0.75 (--gammaprior 0 1.5) moves the
+    posterior by 0.02, against the 0.08 that f = 0.418 predicts. The null mocks are a single
+    population and are correspondingly less constrained than the two binned dispersion profiles
+    the real Jeans fit uses, so f should be read as an upper bound rather than a correction to
+    apply. The reported gamma is data-driven; see the prior-sensitivity table in the paper.
 
     Writes figure_shrinkage_test.png. Mocks only; no network.
     """
@@ -3802,12 +3813,14 @@ def run_shrinkage_test(gamma_true=(0.4, 1.0), nsteps_grid=(400, 1600, 6400), n_r
               f"{nsteps_grid[-1]} steps")
         if shrunk:
             print(f"       NON-CONVERGENCE: the gate's short chains are the cause. "
-                  f"run_dm5_chain() (4000 steps) is unaffected; gamma = 0.78 stands.")
+                  f"run_dm5_chain() at full length is unaffected.")
         else:
-            print(f"       PRIOR SHRINKAGE: bias persists at long chain length. This applies to "
-                  f"EVERY sigma_los fit in the paper, including run_dm5_chain().")
-            print(f"       => the reported gamma is pulled toward {prior_med:.2f}; the true slope "
-                  f"is {'LOWER (MORE CORED)' if gt < prior_med else 'HIGHER'}. Report it.")
+            print(f"       PRIOR SHRINKAGE: bias persists at long chain length, so it is the "
+                  f"prior rather than the sampler.")
+            print(f"       => on these single-population null mocks the posterior is pulled "
+                  f"toward {prior_med:.2f}. NOTE this is an UPPER BOUND on the effect in the "
+                  f"real fit: refitting the data under a prior with median 0.75 "
+                  f"(--gammaprior 0 1.5) moves the posterior by only 0.02.")
 
     n_panels = len(gamma_true)
     fig, axes = plt.subplots(n_panels, 1, figsize=(6.4, 3.0 * n_panels), squeeze=False,
@@ -4947,7 +4960,7 @@ def wp11_load_data(catalog=None, feh_quality_keep=None):
         use_fg = out['pmw'] is not None
     if GAL.get('wp11_selection'):
         try:
-            pR, _pG = wp11_photometric_parent()
+            pR, _pG = wp11_photometric_parent(**(GAL.get('wp11_parent_kw') or {}))
             out = wp11_attach_selection(out, pR)
         except Exception as exc:                 # network or query failure: proceed uniform
             print(f"  [selection] parent query failed ({type(exc).__name__}: {exc}); "
@@ -5591,11 +5604,12 @@ if __name__ == "__main__":
                           "separate --backend for each seed.")
     _ap.add_argument("--gammaprior", nargs=2, type=float, metavar=("LO", "HI"), default=None,
                      help="Bounds of the uniform prior on the inner slope gamma for the "
-                          "spherical-Jeans fit (--dm5); default 0.0 1.9. Because the "
-                          "sigma_los-only likelihood is nearly flat in gamma, the posterior "
-                          "median is pulled toward the prior median; re-running with different "
+                          "spherical-Jeans fit (--dm5); default 0.0 1.9. The sigma_los-only "
+                          "likelihood is nearly flat in gamma, so re-running with different "
                           "bounds measures how much of the reported slope is prior rather than "
-                          "data. Use a separate --backend for each choice.")
+                          "data. Measured: --gammaprior 0 1.5 shifts the prior median by 0.20 "
+                          "and the posterior by 0.02, so the reported slope is data-driven. "
+                          "Use a separate --backend for each choice.")
     _ap.add_argument("--astar", type=float, default=None,
                      help="Override the GravSphere tracer Plummer scale (kpc). Default is the "
                           "median projected radius of the spectroscopic sample (0.333 kpc for "
@@ -5685,9 +5699,12 @@ if __name__ == "__main__":
     _ap.add_argument("--shrinkage", action="store_true",
                      help="Is the gate's baseline bias the PRIOR or NON-CONVERGENCE? Re-runs the "
                           "null test at increasing chain lengths. Bias that shrinks with nsteps "
-                          "was non-convergence (gate machinery only); bias that plateaus is the "
-                          "prior and applies to run_dm5_chain() too, meaning the reported gamma "
-                          "is pulled toward the prior median. Writes figure_shrinkage_test.png.")
+                          "was non-convergence (gate machinery only); bias that plateaus is prior "
+                          "shrinkage, measured here at f = 0.418 on single-population null mocks. "
+                          "Note this OVERSTATES the effect on the real fit: refitting the data "
+                          "under a prior with median 0.75 rather than 0.95 (--gammaprior 0 1.5) "
+                          "moves the posterior by only 0.02, against the 0.08 that f = 0.418 "
+                          "predicts, so treat f as an upper bound. Writes figure_shrinkage_test.png.")
     _ap.add_argument("--pop3", action="store_true",
                      help="Very-metal-poor contamination test: refit WP11 Gamma with "
                           "progressively stricter [Fe/H] floors to check whether the slope is "
