@@ -4732,9 +4732,22 @@ def run_continuous_smoke():
     return ll
 
 
+CONT_GOOD_MODE = np.array([
+    9.345, -0.476, 2.852, 2.199, 0.230, 0.840, 16.015,
+    1.473, 1.412, 1.045, -0.229, -1.925, 0.466])
+"""Reduced (13-parameter, contamination-fixed) parameter vector of the higher-likelihood
+mode found in the full-sample chain. The posterior of this model is bimodal: at 485 steps
+with 28 walkers, 26 walkers sat near ln P = -6753 while 2 sat near -6695, a difference of
+57 log units in favour of the minority mode. The two solutions are physically distinct
+(gamma = 0.23 against 0.62; k_J = -0.23 against -0.56), and the ensemble does not migrate
+between them on any practical timescale. Seeding from this vector via init_mode='good'
+starts every walker in the preferred basin instead of relying on the sampler to find it.
+Order matches free_idx when fix_nuisance=True."""
+
+
 def run_continuous_chain(nwalkers=None, nsteps=2000, nproc=None, backend="cont.h5",
                          resume=None, nsub=None, use_mock=False, fix_nuisance=False,
-                         K=11, feh_quality_keep=None, catalog=None):
+                         K=11, feh_quality_keep=None, catalog=None, init_mode='template'):
     """
     Fit the continuous f(J,[Fe/H]) model (Phase 6) by MCMC. use_mock=True runs the recovery
     test (known gradient kJ and slope gamma); otherwise the real Tolstoy+2023 data.
@@ -4767,7 +4780,12 @@ def run_continuous_chain(nwalkers=None, nsteps=2000, nproc=None, backend="cont.h
     template = cont_truth_vector()                             # Sculptor-like seed / known truth
     nuis = [CONT_PARAM_NAMES.index(p) for p in ('V_C', 'sigV_C', 'M_C', 'sigM_C', 'f_C')]
     free_idx = np.array([i for i in range(CONT_NDIM) if not (fix_nuisance and i in nuis)])
-    ndim = len(free_idx); nw = max(2 * ndim + 2, nwalkers or 0)
+    ndim = len(free_idx); nw = max(4 * ndim, nwalkers or 0)
+    if nw < 4 * ndim:
+        print(f"  WARNING: {nw} walkers for {ndim} parameters. The stretch move proposes along "
+              f"differences between walkers in complementary halves, so an ensemble of "
+              f"{nw//2} spans at most {nw//2 - 1} directions in a {ndim}-dimensional space; "
+              f"mixing will be slow. Use at least {4*ndim}.")
     print(f"  fitting {ndim}/{CONT_NDIM} params"
           + (" (contamination fixed at fiducial)" if fix_nuisance else "")
           + f", K={K} metallicity nodes, {nw} walkers")
@@ -4781,8 +4799,20 @@ def run_continuous_chain(nwalkers=None, nsteps=2000, nproc=None, backend="cont.h
     p0 = None
     if not resume:
         span = (CONT_PRIOR_HI - CONT_PRIOR_LO)[free_idx]
-        p0 = np.clip(init + 0.03 * span * rng.standard_normal((nw, ndim)),
+        scatter = 0.03
+        if init_mode == 'good':
+            if not fix_nuisance or ndim != len(CONT_GOOD_MODE):
+                raise ValueError("init_mode='good' requires the 13-parameter reduced fit "
+                                 "(fix_nuisance=True); see CONT_GOOD_MODE.")
+            init = CONT_GOOD_MODE.copy()
+            scatter = 0.01          # tighter: the mode is narrow and g_z, h_z sit near 1.5
+            print("  seeding all walkers in the higher-likelihood mode (see CONT_GOOD_MODE); "
+                  "the posterior is bimodal and the ensemble does not migrate between basins")
+        elif init_mode != 'template':
+            raise ValueError(f"init_mode must be 'template' or 'good', not {init_mode!r}")
+        p0 = np.clip(init + scatter * span * rng.standard_normal((nw, ndim)),
                      CONT_PRIOR_LO[free_idx] + 1e-6, CONT_PRIOR_HI[free_idx] - 1e-6)
+        print(f"  ln P at the seed centre: {lnprob_fn(init, data):.1f}")
     # affine-invariant stretch move (robust; the DE-heavy mix mixed poorly here, ~0.10
     # acceptance) blended with differential-evolution for correlated parameter directions
     moves = [(emcee.moves.StretchMove(a=2.0), 0.6),
@@ -5727,6 +5757,13 @@ if __name__ == "__main__":
     _ap.add_argument("--nsub", type=int, default=0,
                      help="fit a random subsample of N stars (0 = all ~1339; try 400 "
                           "for a faster laptop first pass)")
+    _ap.add_argument("--goodmode", action="store_true",
+                     help="Seed the continuous-DF walkers in the higher-likelihood mode "
+                          "(CONT_GOOD_MODE) instead of the generic template. The posterior "
+                          "of this model is bimodal: on the full sample 26 of 28 walkers sat "
+                          "57 log units BELOW the other two, at gamma = 0.62 rather than 0.23, "
+                          "and the ensemble does not cross between basins. Requires the "
+                          "13-parameter reduced fit. Use a separate --backend.")
     _ap.add_argument("--no-resume", action="store_true", help="ignore an existing checkpoint")
     _args = _ap.parse_args()
 
@@ -5790,7 +5827,8 @@ if __name__ == "__main__":
             _K = _args.K or (9 if _args.mock else 11)            # --K overrides the default node count
             run_continuous_chain(nsteps=_args.steps, nproc=(_args.nproc or None),
                                  backend=_bk, nsub=(_nsub or None), use_mock=_args.mock,
-                                 fix_nuisance=True, K=_K,
+                                 fix_nuisance=True, K=_K, nwalkers=(_args.walkers or None),
+                                 init_mode=('good' if _args.goodmode else 'template'),
                                  resume=(False if _args.no_resume else None))
         else:
             run_continuous_smoke()
