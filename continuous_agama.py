@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # =============================================================================
 #  Constraining the Inner Dark-Matter Slope of Sculptor:
-#  A Comparative Analysis of Four Dynamical Methods
+#  A Comparative Analysis of Dynamical Methods
 #
 #  Author:  Rishi Sanjeev, The Charter School of Wilmington
 #  Contact: rishsanjeev@gmail.com
@@ -945,7 +945,7 @@ def plot_inferred_halo_profiles(r_array=None,
     ax1.set_yscale('log')
     ax1.set_ylabel(r"Enclosed mass $M(<R)$ ($M_\odot$)")
     ax1.set_title("Sculptor dSph — semi-empirical halo + real literature")
-    ax1.legend(loc='lower right', frameon=True, fontsize=8.5)
+    ax1.legend(loc='lower right', frameon=True, fontsize=12)
     ax1.grid(True, which='both', alpha=0.2)
 
     # ── Lower panel: density ────────────────────────────────────────────────
@@ -979,7 +979,7 @@ def plot_inferred_halo_profiles(r_array=None,
     ax2.grid(True, which='both', alpha=0.2)
     ax2.text(0.05, 0.05,
              r"Illustrative: 15 stars with $\log_{10}(R/{\rm kpc}) < -1.5$ omitted",
-             transform=ax2.transAxes, fontsize=9, color='dimgray')
+             transform=ax2.transAxes, fontsize=12, color='dimgray')
 
     plt.tight_layout()
     plt.subplots_adjust(hspace=0.05)
@@ -1757,7 +1757,7 @@ def run_action_df_modeling(high_fidelity=False, mcmc_nwalkers=32, mcmc_nsteps=30
     axA.set_xscale('log'); axA.set_xlabel('Projected radius $R$ (kpc)')
     axA.set_ylabel(r'$\sigma_{\rm los}$ (km s$^{-1}$)')
     axA.set_title(f'(a) Two-population fit ({src})')
-    axA.legend(fontsize=8); axA.grid(alpha=0.3)
+    axA.legend(fontsize=12); axA.grid(alpha=0.3)
 
     # (b) recovered DM density profile (+ posterior band if MCMC ran)
     axB = ax[0, 1]
@@ -1773,7 +1773,7 @@ def run_action_df_modeling(high_fidelity=False, mcmc_nwalkers=32, mcmc_nsteps=30
     axB.set_xscale('log'); axB.set_yscale('log')
     axB.set_xlabel('Radius $r$ (kpc)'); axB.set_ylabel(r'$\rho_{\rm DM}(r)$ ($M_\odot\,{\rm kpc}^{-3}$)')
     axB.set_title('(b) DM density: inner-slope recovery')
-    axB.legend(fontsize=8); axB.grid(alpha=0.2, which='both')
+    axB.legend(fontsize=12); axB.grid(alpha=0.2, which='both')
 
     # (c) projected anisotropy prediction
     axC = ax[1, 0]
@@ -1783,7 +1783,7 @@ def run_action_df_modeling(high_fidelity=False, mcmc_nwalkers=32, mcmc_nsteps=30
     axC.set_xscale('log'); axC.set_xlabel('Projected radius $R$ (kpc)')
     axC.set_ylabel(r'$\sigma$ (km s$^{-1}$)')
     axC.set_title('(c) Predicted profiles: radial anisotropy outward')
-    axC.legend(fontsize=8); axC.grid(alpha=0.3)
+    axC.legend(fontsize=12); axC.grid(alpha=0.3)
 
     # (d) enclosed mass + real literature (+ posterior band if MCMC ran)
     axD = ax[1, 1]
@@ -1800,7 +1800,7 @@ def run_action_df_modeling(high_fidelity=False, mcmc_nwalkers=32, mcmc_nsteps=30
     axD.set_xscale('log'); axD.set_yscale('log')
     axD.set_xlabel('Radius $r$ (kpc)'); axD.set_ylabel(r'$M(<r)$ ($M_\odot$)')
     axD.set_title('(d) Enclosed mass vs. real literature')
-    axD.legend(fontsize=7.5, loc='lower right'); axD.grid(alpha=0.2, which='both')
+    axD.legend(fontsize=12, loc='lower right'); axD.grid(alpha=0.2, which='both')
 
     mode = 'per-star MCMC' if chain is not None else 'MLE'
     plt.tight_layout()
@@ -3053,7 +3053,7 @@ def make_ap25_figure4(flat, out="figure_ap25_fig4.png", n_draw=400, seed=0):
         ax1.errorbar(rk, M, yerr=e, fmt='o', ms=7, color=col, capsize=3, label=lbl, zorder=5)
     ax1.set_yscale('log'); ax1.set_ylabel(r'$M_{\rm DM}(<r)\ \ [M_\odot]$')
     ax1.set_title('DM halo profiles inferred for Sculptor  (Phase-5 posterior)')
-    ax1.legend(fontsize=8, loc='lower right'); ax1.grid(alpha=0.25, which='both')
+    ax1.legend(fontsize=12, loc='lower right'); ax1.grid(alpha=0.25, which='both')
 
     # ── lower panel: DM density ──
     ax2.fill_between(rgrid, rlo, rhi, color='crimson', alpha=0.25)
@@ -3079,7 +3079,7 @@ def make_ap25_figure4(flat, out="figure_ap25_fig4.png", n_draw=400, seed=0):
     ax2.set_xscale('log'); ax2.set_yscale('log')
     ax2.set_xlabel(r'$r\ \ [\mathrm{kpc}]$')
     ax2.set_ylabel(r'$\rho_{\rm DM}(r)\ \ [M_\odot\,\mathrm{kpc}^{-3}]$')
-    ax2.legend(fontsize=8, loc='lower left'); ax2.grid(alpha=0.25, which='both')
+    ax2.legend(fontsize=12, loc='lower left'); ax2.grid(alpha=0.25, which='both')
 
     fig.savefig(out, dpi=130, bbox_inches='tight'); plt.close(fig)
     return out
@@ -3166,7 +3166,9 @@ def make_fig4_all_chains(out=None, chains=None, n_draw=200):
                 rho_lo, rho_mid, rho_hi = np.percentile(rho_s, [16, 50, 84])
                 ax.errorbar(r_mid, rho_mid, yerr=[[rho_mid - rho_lo], [rho_hi - rho_mid]],
                            fmt='D', color='firebrick', ms=7, mec='k', mew=0.6, capsize=3,
-                           zorder=5, label='WP11 (this work)' if mk == 'MR' else None)
+                           zorder=5,
+                           label='Two-population estimator, this implementation'
+                                 if mk == 'MR' else None)
         except Exception as exc:
             print(f"  WP11 data points skipped ({str(exc)[:60]})")
 
@@ -3192,7 +3194,7 @@ def make_fig4_all_chains(out=None, chains=None, n_draw=200):
 
     ax.set_xscale('log'); ax.set_yscale('log')
     ax.set_xlabel(r'$r$  [kpc]'); ax.set_ylabel(r'$\rho_{\rm DM}(r)$  [$M_\odot\,{\rm kpc}^{-3}$]')
-    ax.legend(fontsize=8.5, loc='lower left'); ax.grid(alpha=0.25, which='both')
+    ax.legend(fontsize=12, loc='lower left'); ax.grid(alpha=0.25, which='both')
     fig.tight_layout(); fig.savefig(out, dpi=140, bbox_inches='tight'); plt.close(fig)
     print(f"--> Saved {out}  (frameworks: {', '.join(plotted)})")
     return out
@@ -3267,14 +3269,27 @@ def _dip_test(x):
 
 
 def _load_real_feh(catalog=None, feh_quality_keep=None):
-    """(R, vlos_restframe, feh, verr) for the active galaxy's analysis sample."""
+    """(R, vlos_restframe, feh, verr) for the active galaxy's analysis sample.
+
+    Where the galaxy config sets mmfs_average, the per-star sample is rebuilt from the
+    per-exposure table rather than read from the published /stars table, so that figures
+    show the same stars the two-population fit uses (2603 for Fornax, against the 452 the
+    /stars table yields once rows without a Mg index are dropped). Non-members are retained
+    when a foreground model is in use, again matching the fit.
+    """
     catalog = catalog or GAL['catalog']
     fqk = GAL['feh_quality_keep'] if feh_quality_keep is None else feh_quality_keep
-    ra, dec, vlos, verr, feh, feherr, _g = _fetch_tolstoy2023(
-        catalog, GAL.get('cols'), mem_keep=(GAL.get('mem_keep') or ('m',)),
-        require_member=bool(GAL.get('mem_keep')),
-        target_col=GAL.get('target_col'), target_keep=GAL.get('target_keep'), mem_min=GAL.get('mem_min'),
-        feh_quality_keep=(list(fqk) if fqk else None))
+    if GAL.get('mmfs_average'):
+        ra, dec, vlos, verr, feh, feherr, _m = _fetch_mmfs_averaged(
+            catalog, galaxy_prefixes=GAL.get('target_keep', ()),
+            index_col=str(GAL['cols']['feh']).strip('<>'),
+            mem_min=(None if GAL.get('wp11_foreground') else GAL.get('mem_min')))
+    else:
+        ra, dec, vlos, verr, feh, feherr, _g = _fetch_tolstoy2023(
+            catalog, GAL.get('cols'), mem_keep=(GAL.get('mem_keep') or ('m',)),
+            require_member=bool(GAL.get('mem_keep')),
+            target_col=GAL.get('target_col'), target_keep=GAL.get('target_keep'), mem_min=GAL.get('mem_min'),
+            feh_quality_keep=(list(fqk) if fqk else None))
     good = np.isfinite(vlos) & np.isfinite(feh) & np.isfinite(verr)
     R = _semi_major_axis_radius(ra[good], dec[good])
     return R, vlos[good] - V_SYS, feh[good], verr[good]
@@ -3339,14 +3354,26 @@ def run_sliding_metallicity_test(catalog=None, feh_quality_keep=None,
     med = np.median(feh)
     lo, hi = np.percentile(feh, 20), np.percentile(feh, 80)
     thr = np.linspace(lo, hi, nthresh)
-    sig_mp, sig_mr = [], []
+    # The two sides are strongly IMBALANCED across the sweep: at the 20th-percentile
+    # threshold the metal-poor side holds ~20% of the sample and the metal-rich side ~80%,
+    # and the reverse at the 80th. A dispersion from 270 stars is roughly twice as uncertain
+    # as one from 1070, so the curves are NOT equally reliable along the x-axis and must
+    # carry errors, or the eye reads a spurious trend into the noisy ends. For a Gaussian
+    # the standard error on sigma is sigma/sqrt(2(N-1)); N is tracked for the annotation.
+    sig_mp, sig_mr, err_mp, err_mr, n_mp, n_mr = [], [], [], [], [], []
     for t in thr:
         mp, mr = feh < t, feh >= t
         if mp.sum() < 60 or mr.sum() < 60:
-            sig_mp.append(np.nan); sig_mr.append(np.nan); continue
-        sig_mp.append(np.sqrt(max(np.var(vlos[mp], ddof=1) - np.mean(verr[mp] ** 2), 1.0)))
-        sig_mr.append(np.sqrt(max(np.var(vlos[mr], ddof=1) - np.mean(verr[mr] ** 2), 1.0)))
+            for a in (sig_mp, sig_mr, err_mp, err_mr): a.append(np.nan)
+            n_mp.append(0); n_mr.append(0); continue
+        s_mp = np.sqrt(max(np.var(vlos[mp], ddof=1) - np.mean(verr[mp] ** 2), 1.0))
+        s_mr = np.sqrt(max(np.var(vlos[mr], ddof=1) - np.mean(verr[mr] ** 2), 1.0))
+        sig_mp.append(s_mp); sig_mr.append(s_mr)
+        err_mp.append(s_mp / np.sqrt(2.0 * (mp.sum() - 1)))
+        err_mr.append(s_mr / np.sqrt(2.0 * (mr.sum() - 1)))
+        n_mp.append(int(mp.sum())); n_mr.append(int(mr.sum()))
     sig_mp, sig_mr = np.array(sig_mp), np.array(sig_mr)
+    err_mp, err_mr = np.array(err_mp), np.array(err_mr)
 
     gammas = np.linspace(0.0, 1.6, 25)
     dchi2 = _profile_chi2_gamma(R, vlos, verr, gammas)          # sigma_los-only slope constraint
@@ -3356,11 +3383,20 @@ def run_sliding_metallicity_test(catalog=None, feh_quality_keep=None,
     # Stacked vertically rather than side-by-side: the two panels share no axis, so nothing is
     # lost by stacking, and a column-width float can sit beside the text that discusses it.
     fig, (axL, axR) = plt.subplots(2, 1, figsize=(6.5, 8.4))
-    axL.plot(thr, sig_mp, '-o', color='royalblue', ms=4, label=r'"metal-poor" side ([Fe/H] < thr)')
-    axL.plot(thr, sig_mr, '-s', color='crimson', ms=4, label=r'"metal-rich" side ([Fe/H] > thr)')
+    axL.errorbar(thr, sig_mp, yerr=err_mp, fmt='-o', color='royalblue', ms=4, capsize=2,
+                 elinewidth=0.9, label=r'"metal-poor" side ([Fe/H] < thr)')
+    axL.errorbar(thr, sig_mr, yerr=err_mr, fmt='-s', color='crimson', ms=4, capsize=2,
+                 elinewidth=0.9, label=r'"metal-rich" side ([Fe/H] > thr)')
     axL.axvline(med, color='k', ls='--', lw=1.2, label=f'median split = {med:.2f}')
+    # Sample size varies by a factor of ~4 across the sweep; annotate the ends so the reader
+    # can see which points are noisy rather than inferring structure from them.
+    if n_mp and n_mp[0]:
+        axL.annotate(f'$N$={n_mp[0]}/{n_mr[0]}', xy=(thr[0], sig_mp[0]), fontsize=12,
+                     xytext=(3, -12), textcoords='offset points', color='0.35')
+        axL.annotate(f'$N$={n_mp[-1]}/{n_mr[-1]}', xy=(thr[-1], sig_mp[-1]), fontsize=12,
+                     xytext=(-3, -12), textcoords='offset points', ha='right', color='0.35')
     axL.set_xlabel('[Fe/H] split threshold  [dex]'); axL.set_ylabel(r'$\sigma_{\rm los}$  [km s$^{-1}$]')
-    axL.legend(fontsize=8.5); axL.grid(alpha=0.3)
+    axL.legend(fontsize=12); axL.grid(alpha=0.3)
 
     axR.plot(gammas, dchi2, '-o', color='purple', ms=4)
     axR.axhline(1.0, color='gray', ls=':', lw=1.2, label=r'$\Delta\chi^2=1$ (1$\sigma$)')
@@ -3368,16 +3404,16 @@ def run_sliding_metallicity_test(catalog=None, feh_quality_keep=None,
     if np.isfinite(grange[0]):
         axR.axvspan(grange[0], grange[1], color='purple', alpha=0.12)
     axR.axvline(1.0, color='k', ls=':', lw=1.0)
-    axR.text(1.0, 0.96, ' cusp', transform=axR.get_xaxis_transform(), fontsize=8, va='top')
+    axR.text(1.0, 0.96, ' cusp', transform=axR.get_xaxis_transform(), fontsize=12, va='top')
     axR.set_xlabel(r'DM inner slope $\gamma$')
     axR.set_ylabel(r'$\Delta\chi^2$  ($\sigma_{\rm los}$ only, profiled over $r_s,\rho_s$)')
     # The 1-sigma gamma range is a measured quantity, so it stays on the figure -- but as an
     # in-axes annotation rather than a title (titles are carried by the LaTeX caption).
     axR.text(0.97, 0.03,
              f'$\\gamma\\in[{grange[0]:.2f},{grange[1]:.2f}]$ within $1\\sigma$',
-             transform=axR.transAxes, va='bottom', ha='right', fontsize=10,
+             transform=axR.transAxes, va='bottom', ha='right', fontsize=12,
              bbox=dict(boxstyle='round', fc='white', ec='0.7', alpha=0.85))
-    axR.set_ylim(-0.3, min(np.nanmax(dchi2), 12)); axR.legend(fontsize=8.5); axR.grid(alpha=0.3)
+    axR.set_ylim(-0.3, min(np.nanmax(dchi2), 12)); axR.legend(fontsize=12); axR.grid(alpha=0.3)
 
     _dipstr = f", dip $p$={dp:.2f}" if dip is not None else ""
     fig.tight_layout(); fig.savefig(out, dpi=150, bbox_inches='tight'); plt.close(fig)
@@ -3441,7 +3477,8 @@ def _gnfw_gamma_posterior(pops, nwalk=16, nsteps=400, seed=0):
     return float(np.median(s.get_chain(discard=nsteps // 2, flat=True)[:, 0]))
 
 
-def run_bias_gate(gamma_true=(0.4, 1.0), n_real=40, out="figure_bias_gate.png"):
+def run_bias_gate(gamma_true=(0.4, 1.0), n_real=40, out="figure_bias_gate.png",
+                  split_frac=None):
     """
     THE GATE for the thesis' strongest claim. On mocks with a KNOWN gamma and a CONTINUOUS
     metallicity gradient (no two populations), recover gamma two ways using POSTERIOR
@@ -3468,7 +3505,7 @@ def run_bias_gate(gamma_true=(0.4, 1.0), n_real=40, out="figure_bias_gate.png"):
         gd, gc = [], []
         for s in range(n_real):
             R, vlos, feh = _continuous_gradient_mock(gt, s)
-            med = np.median(feh); mp, mr = feh < med, feh >= med
+            med = _split_threshold(feh, split_frac); mp, mr = feh < med, feh >= med
             pops = []
             for sel in (mp, mr):
                 a = float(np.median(R[sel])); rc, so, se = _binprof(R[sel], vlos[sel])
@@ -3498,12 +3535,173 @@ def run_bias_gate(gamma_true=(0.4, 1.0), n_real=40, out="figure_bias_gate.png"):
         ax.set_xlabel(r'recovered $\gamma$ (posterior median)'); ax.set_ylabel('realisations')
         # in-axes label rather than set_title (titles carried by the LaTeX caption)
         ax.text(0.03, 0.96, f'$\\gamma_{{\\rm true}}={gt}$', transform=ax.transAxes,
-                va='top', ha='left', fontsize=11,
+                va='top', ha='left', fontsize=12,
                 bbox=dict(boxstyle='round', fc='white', ec='0.7', alpha=0.85))
-        ax.legend(fontsize=8)
+        ax.legend(fontsize=12)
     fig.tight_layout(); fig.savefig(out, dpi=150, bbox_inches='tight'); plt.close(fig)
     print(f"\n--> Saved {out}")
     return results
+
+
+R_PINCH_KPC = 0.20       # radius at which the frameworks' density profiles converge
+
+
+def run_enclosed_mass(r=R_PINCH_KPC, nthin=400):
+    """Enclosed mass at r from each converged chain.
+
+    Section 4.4 argues the frameworks agree on the mass near the radius where their density
+    profiles cross and diverge outside it. That claim is qualitative unless the mass is
+    actually quoted, and it is the one quantity these data constrain well, so it is worth a
+    number. Masses are propagated through the posterior rather than evaluated at the median
+    parameters: the gNFW mass is nonlinear in gamma, r_s and the normalisation, so the two
+    differ. Reads the saved chains; writes nothing.
+    """
+    print("=" * 70)
+    print(f"  ENCLOSED MASS AT r = {r} kpc")
+    print("=" * 70)
+    out = {}
+
+    try:
+        flat = np.load(_gf('dm5_chain.npy'))
+        thin = flat[:: max(1, len(flat) // nthin)]
+        M = []
+        for t in thin:
+            try:
+                M.append(dm_potential_5p(t[0], 10.0 ** t[1], t[2], 1.0, 3.0).enclosedMass(r))
+            except Exception:
+                pass
+        M = np.array(M); q = np.percentile(M, [16, 50, 84]); out['jeans'] = q
+        print(f"  {'Spherical Jeans':<18} {q[1]:.3e} (+{q[2]-q[1]:.2e}/-{q[1]-q[0]:.2e}) Msun"
+              f"   log10 = {np.log10(q[1]):.3f}")
+    except FileNotFoundError:
+        print("  Spherical Jeans    dm5_chain.npy not found -- run --dm5 first")
+
+    try:
+        flat = np.load(_gf('gravsphere_chain.npy'))
+        thin = flat[:: max(1, len(flat) // nthin)]
+        M = []
+        for t in thin:
+            try:
+                M.append(float(np.interp(r, _GS_RG, _gs_M_grid(t[0], 10.0 ** t[1], 10.0 ** t[2]))))
+            except Exception:
+                pass
+        M = np.array(M); q = np.percentile(M, [16, 50, 84]); out['gravsphere'] = q
+        print(f"  {'GravSphere':<18} {q[1]:.3e} (+{q[2]-q[1]:.2e}/-{q[1]-q[0]:.2e}) Msun"
+              f"   log10 = {np.log10(q[1]):.3f}")
+    except FileNotFoundError:
+        print("  GravSphere         gravsphere_chain.npy not found -- run --gravsphere first")
+
+    # The two-population estimator fits no profile, so there is nothing to evaluate at an
+    # arbitrary radius. Its M(r_h,1) is already a posterior quantity at ~0.19 kpc and is
+    # quoted directly. It is a DYNAMICAL mass carrying the Walker+2009 normalisation, not a
+    # DM-only mass, so it is not directly comparable with the two above.
+    try:
+        d = wp11_derived(np.load(_gf('wp11_chain.npy')))
+        q = np.percentile(d['M1'], [16, 50, 84]); out['wp11'] = q
+        rq = np.percentile(d['rh1'] / 1e3, [16, 50, 84])
+        print(f"  {'Two-population':<18} {q[1]:.3e} (+{q[2]-q[1]:.2e}/-{q[1]-q[0]:.2e}) Msun"
+              f"   log10 = {np.log10(q[1]):.3f}")
+        print(f"  {'':18} at r_h,1 = {rq[1]:.3f} (+{rq[2]-rq[1]:.3f}/-{rq[1]-rq[0]:.3f}) kpc; "
+              f"dynamical, not DM-only")
+    except FileNotFoundError:
+        print("  Two-population     wp11_chain.npy not found -- run --wp11 first")
+    return out
+
+
+def _pa_and_axratio(x, y):
+    """Major-axis position angle (deg east of north, mod 180) and axis ratio, from the second
+    moments of the projected positions."""
+    xm, ym = x - x.mean(), y - y.mean()
+    Sxx, Syy, Sxy = np.mean(xm * xm), np.mean(ym * ym), np.mean(xm * ym)
+    pa = (np.degrees(0.5 * np.arctan2(2.0 * Sxy, Sxx - Syy)) + 90.0) % 180.0
+    tr, det = Sxx + Syy, Sxx * Syy - Sxy ** 2
+    root = np.sqrt(max(tr ** 2 - 4.0 * det, 0.0))
+    lam1, lam2 = 0.5 * (tr + root), 0.5 * (tr - root)
+    return pa, (np.sqrt(max(lam2, 0.0) / lam1) if lam1 > 0 else np.nan)
+
+
+def run_subpop_pa(nboot=2000, split_frac=None):
+    """Position angles of the two metallicity subcomponents.
+
+    Genina et al. (2018) attribute their spurious cores to MISALIGNMENT between the elongated
+    subpopulations rather than to elongation itself: their Galaxies 1 and 2 are elongated but
+    aligned and recover the cusp, while the misaligned Galaxy 4 does not. That mechanism is
+    measurable here, which turns a conceded limitation into a test.
+
+    Caveat carried into the text: this uses the SPECTROSCOPIC sample, which is not spatially
+    complete. Both subcomponents come from the same targeting, so a selection-imposed
+    geometry affects both alike and largely cancels in their DIFFERENCE -- the quantity of
+    interest -- and the all-star PA is compared against the spatially complete Munoz+2018
+    photometry to bound how much geometry the selection imposes at all.
+    """
+    print("=" * 70)
+    print("  SUBPOPULATION POSITION ANGLES  (Genina+2018 misalignment test)")
+    print("=" * 70)
+    fqk = GAL.get('feh_quality_keep')
+    ra, dec, vlos, verr, feh, feherr, _g = _fetch_tolstoy2023(
+        GAL['catalog'], GAL.get('cols'), mem_keep=(GAL.get('mem_keep') or ('m',)),
+        require_member=True, target_col=GAL.get('target_col'),
+        target_keep=GAL.get('target_keep'), mem_min=GAL.get('mem_min'),
+        feh_quality_keep=(list(fqk) if fqk else None))
+    ok = np.isfinite(ra) & np.isfinite(dec) & np.isfinite(feh)
+    ra, dec, feh = ra[ok], dec[ok], feh[ok]
+    x = (ra - RA0_DEG) * np.cos(np.radians(dec))       # +east, degrees
+    y = dec - DEC0_DEG                                 # +north
+
+    cut = _split_threshold(feh, split_frac)
+    mr, mp = feh >= cut, feh < cut
+    print(f"  N = {len(feh)}, split at [Fe/H] = {cut:.3f} "
+          f"(metal-rich {mr.sum()}, metal-poor {mp.sum()})")
+    print(f"  adopted photometric PA (Munoz+2018): {GAL['pa_deg']:.1f} deg\n")
+
+    rng = np.random.default_rng(0)
+    boots = {}
+    for lab, m in (('metal-rich', mr), ('metal-poor', mp),
+                   ('all stars', np.ones(len(feh), bool))):
+        pa, q = _pa_and_axratio(x[m], y[m])
+        b = np.empty(nboot)
+        xs, ys = x[m], y[m]
+        for i in range(nboot):
+            j = rng.integers(0, len(xs), len(xs))
+            b[i] = _pa_and_axratio(xs[j], ys[j])[0]
+        b = pa + ((b - pa + 90.0) % 180.0) - 90.0      # unwrap about the point estimate
+        boots[lab] = b
+        lo, hi = np.percentile(b, [16, 84])
+        print(f"  {lab:<12} PA = {pa:6.1f} (+{hi-pa:4.1f}/-{pa-lo:4.1f}) deg    "
+              f"axis ratio q = {q:.3f}")
+
+    da = (boots['all stars'] - GAL['pa_deg'] + 90.0) % 180.0 - 90.0
+    a16, a50, a84 = np.percentile(da, [16, 50, 84])
+    print(f"\n  all-stars PA minus the photometric PA = "
+          f"{a50:+.1f} (+{a84-a50:.1f}/-{a50-a16:.1f}) deg")
+
+    d = (boots['metal-rich'] - boots['metal-poor'] + 90.0) % 180.0 - 90.0
+    q16, q50, q84 = np.percentile(d, [16, 50, 84])
+    print(f"  misalignment = {q50:+.1f} (+{q84-q50:.1f}/-{q50-q16:.1f}) deg")
+    for thr in (10, 20, 30):
+        print(f"    P(|misalignment| > {thr:2d} deg) = {np.mean(np.abs(d) > thr):.3f}")
+    return {'misalign': d, 'photometric_offset': da}
+
+
+def _split_threshold(feh, split_frac=None):
+    """[Fe/H] threshold separating the 'metal-poor' and 'metal-rich' arms of a gate.
+
+    split_frac is the fraction of the sample assigned to the METAL-POOR side, so the cut
+    sits at the 100*split_frac-th percentile. Passing None reproduces the median split.
+
+    Why this is not merely cosmetic: _discrete_twopop_mock builds its truth with
+    f_MR = 0.34 (Arroyo-Polonio et al. 2024, Table C.2), so a median split assigns 669 of
+    1338 stars to the metal-rich arm when only 455 belong there. About a third of that arm
+    is then metal-poor interlopers drawn from the MORE EXTENDED Plummer, which inflates the
+    fitted r_h,1 and flattens the recovered slope. Splitting at the 66th percentile instead
+    balances the misassignment (105 stars each way rather than 233 against 19) and tests
+    whether the reverse gate's discrete-arm bias is a property of the decomposition or an
+    artifact of the threshold. Note the real two-population estimator does NOT split at all:
+    it fits the mixing fraction f_sub as a free parameter (see WP11_PARAM_NAMES), so this
+    concerns the mock gates and the Jeans binning only.
+    """
+    return float(np.median(feh) if split_frac is None
+                 else np.percentile(feh, 100.0 * split_frac))
 
 
 def _discrete_twopop_mock(gamma_true, seed, n=1338, rs=1.0, rhos=6.0e7,
@@ -3541,7 +3739,8 @@ def _discrete_twopop_mock(gamma_true, seed, n=1338, rs=1.0, rhos=6.0e7,
     return np.concatenate(R_all), np.concatenate(v_all), np.concatenate(z_all)
 
 
-def run_reverse_bias_gate(gamma_true=(0.4, 1.0), n_real=40, out="figure_reverse_bias_gate.png"):
+def run_reverse_bias_gate(gamma_true=(0.4, 1.0), n_real=40, out="figure_reverse_bias_gate.png",
+                          split_frac=None):
     """
     THE REVERSE GATE -- the necessary companion to run_bias_gate.
 
@@ -3581,7 +3780,7 @@ def run_reverse_bias_gate(gamma_true=(0.4, 1.0), n_real=40, out="figure_reverse_
         gd, gc = [], []
         for s in range(n_real):
             R, vlos, feh = _discrete_twopop_mock(gt, s)
-            med = np.median(feh); mp, mr = feh < med, feh >= med
+            med = _split_threshold(feh, split_frac); mp, mr = feh < med, feh >= med
             pops = []
             for sel in (mp, mr):
                 a = float(np.median(R[sel])); rc, so, se = _binprof(R[sel], vlos[sel])
@@ -3614,15 +3813,16 @@ def run_reverse_bias_gate(gamma_true=(0.4, 1.0), n_real=40, out="figure_reverse_
         ax.axvline(gd.mean(), color='crimson', lw=1.5); ax.axvline(gc.mean(), color='seagreen', lw=1.5)
         ax.set_xlabel(r'recovered $\gamma$ (posterior median)'); ax.set_ylabel('realisations')
         ax.text(0.03, 0.96, f'$\\gamma_{{\\rm true}}={gt}$ (two discrete populations)',
-                transform=ax.transAxes, va='top', ha='left', fontsize=11,
+                transform=ax.transAxes, va='top', ha='left', fontsize=12,
                 bbox=dict(boxstyle='round', fc='white', ec='0.7', alpha=0.85))
-        ax.legend(fontsize=8)
+        ax.legend(fontsize=12)
     fig.tight_layout(); fig.savefig(out, dpi=150, bbox_inches='tight'); plt.close(fig)
     print(f"\n--> Saved {out}")
     return results
 
 
-def run_gate_diagnostics(gamma_true=(0.4, 1.0), n_real=40, out="figure_gate_diagnostics.png"):
+def run_gate_diagnostics(gamma_true=(0.4, 1.0), n_real=40, out="figure_gate_diagnostics.png",
+                         split_frac=None):
     """
     CONTROL TESTS for the two bias gates. These are not optional extras: the reverse gate's
     *matched* model -- a discrete median split applied to genuinely discrete truth -- came back
@@ -3659,7 +3859,7 @@ def run_gate_diagnostics(gamma_true=(0.4, 1.0), n_real=40, out="figure_gate_diag
 
     def _recover(R, vlos, feh, s):
         """Return (gamma_discrete_median_split, gamma_continuous_all_stars)."""
-        med = np.median(feh)
+        med = _split_threshold(feh, split_frac)
         pops = []
         for sel in (feh < med, feh >= med):
             a = float(np.median(R[sel])); rc, so, se = _binprof(R[sel], vlos[sel])
@@ -3727,16 +3927,16 @@ def run_gate_diagnostics(gamma_true=(0.4, 1.0), n_real=40, out="figure_gate_diag
             ax.errorbar(i, v.mean(), yerr=v.std() / np.sqrt(len(v)), fmt='o', color=c,
                         ms=9, capsize=5, lw=2)
             ax.annotate(f'{v.mean()-gt:+.2f}', (i, v.mean()), textcoords='offset points',
-                        xytext=(0, 13), ha='center', fontsize=9)
+                        xytext=(0, 13), ha='center', fontsize=12)
         ax.axhline(gt, color='k', ls='--', lw=2, label=f'truth $\\gamma$={gt}')
         ax.set_xticks(range(4))
         ax.set_xlim(-0.5, 3.5); ax.set_ylabel(r'recovered $\gamma$')
-        ax.legend(fontsize=9, loc='best'); ax.grid(alpha=0.3)
+        ax.legend(fontsize=12, loc='best'); ax.grid(alpha=0.3)
         # panel identity as in-axes text, not a title (titles were removed paper-wide)
         ax.text(0.02, 0.94, f'$\\gamma_{{\\rm true}}={gt}$', transform=ax.transAxes,
-                va='top', ha='left', fontsize=11,
+                va='top', ha='left', fontsize=12,
                 bbox=dict(boxstyle='round', fc='white', ec='0.7', alpha=0.85))
-    axes[-1, 0].set_xticklabels(labels, fontsize=9)     # x labels on the bottom panel only
+    axes[-1, 0].set_xticklabels(labels, fontsize=12)     # x labels on the bottom panel only
     fig.tight_layout(); fig.savefig(out, dpi=150, bbox_inches='tight'); plt.close(fig)
     print(f"\n--> Saved {out}")
     return results
@@ -3834,9 +4034,9 @@ def run_shrinkage_test(gamma_true=(0.4, 1.0), nsteps_grid=(400, 1600, 6400), n_r
         ax.axhline(prior_med - gt, color='crimson', ls=':', lw=1.6,
                    label=f'full shrinkage to prior median ({prior_med:.2f})')
         ax.set_xscale('log'); ax.set_ylabel(r'bias in recovered $\gamma$')
-        ax.legend(fontsize=8, loc='best'); ax.grid(alpha=0.3)
+        ax.legend(fontsize=12, loc='best'); ax.grid(alpha=0.3)
         ax.text(0.02, 0.94, f'$\\gamma_{{\\rm true}}={gt}$', transform=ax.transAxes,
-                va='top', ha='left', fontsize=11,
+                va='top', ha='left', fontsize=12,
                 bbox=dict(boxstyle='round', fc='white', ec='0.7', alpha=0.85))
     axes[-1, 0].set_xlabel('MCMC steps')                # x label on the bottom panel only
     fig.tight_layout(); fig.savefig(out, dpi=150, bbox_inches='tight'); plt.close(fig)
@@ -3888,7 +4088,7 @@ def run_bias_vs_realizations(gamma_true=1.0, max_real=40, out="figure_bias_vs_re
     ax.axhline(0.0, color='k', ls='--', lw=1.5, label='unbiased (truth)')
     ax.set_xlabel('number of mock realisations')
     ax.set_ylabel(r'mean recovered-$\gamma$ bias  ($\langle\gamma\rangle-\gamma_{\rm true}$)')
-    ax.legend(fontsize=9); ax.grid(alpha=0.3)
+    ax.legend(fontsize=12); ax.grid(alpha=0.3)
     fig.tight_layout(); fig.savefig(out, dpi=150, bbox_inches='tight'); plt.close(fig)
     print(f"\n--> Saved {out}")
     print(f"  final: discrete bias = {np.mean(gd)-gamma_true:+.3f}, "
@@ -3916,11 +4116,18 @@ def make_data_overview(catalog=None, feh_quality_keep=None,
     if arrays is None:
         _cat = catalog or GAL['catalog']
         _fqk = GAL['feh_quality_keep'] if feh_quality_keep is None else feh_quality_keep
-        ra, dec, vlos, verr, feh, feherr, gmag = _fetch_tolstoy2023(
-            _cat, GAL.get('cols'), mem_keep=(GAL.get('mem_keep') or ('m',)),
-            require_member=bool(GAL.get('mem_keep')),
-            target_col=GAL.get('target_col'), target_keep=GAL.get('target_keep'), mem_min=GAL.get('mem_min'),
-            feh_quality_keep=(list(_fqk) if _fqk else None))
+        if GAL.get('mmfs_average'):      # rebuild from per-exposure rows; see _load_real_feh
+            ra, dec, vlos, verr, feh, feherr, _m = _fetch_mmfs_averaged(
+                _cat, galaxy_prefixes=GAL.get('target_keep', ()),
+                index_col=str(GAL['cols']['feh']).strip('<>'),
+                mem_min=(None if GAL.get('wp11_foreground') else GAL.get('mem_min')))
+            gmag = np.full(len(ra), np.nan)
+        else:
+            ra, dec, vlos, verr, feh, feherr, gmag = _fetch_tolstoy2023(
+                _cat, GAL.get('cols'), mem_keep=(GAL.get('mem_keep') or ('m',)),
+                require_member=bool(GAL.get('mem_keep')),
+                target_col=GAL.get('target_col'), target_keep=GAL.get('target_keep'), mem_min=GAL.get('mem_min'),
+                feh_quality_keep=(list(_fqk) if _fqk else None))
         good = np.isfinite(vlos) & np.isfinite(feh)
         ra, dec = ra[good], dec[good]
         vlos, feh = vlos[good] - V_SYS, feh[good]     # rest-frame velocity
@@ -3949,7 +4156,7 @@ def make_data_overview(catalog=None, feh_quality_keep=None,
     a.hist(vlos[mr], b, color=cMR, alpha=0.6, label='metal-rich')
     a.axvline(0, color='k', ls='--', lw=1, label='systemic')
     a.set_xlabel(r'$v_{\rm los}$ (rest frame)  [km s$^{-1}$]'); a.set_ylabel('N stars')
-    a.set_title(f'Line-of-sight velocity  (N = {len(vlos)})'); a.legend(fontsize=8)
+    a.set_title(f'Line-of-sight velocity  (N = {len(vlos)})'); a.legend(fontsize=12)
 
     # (2) metallicity histogram + unimodality statistics (evidence #1)
     a = ax[0, 1]
@@ -3963,12 +4170,12 @@ def make_data_overview(catalog=None, feh_quality_keep=None,
                f'$\\Delta$BIC$_{{1-2}}$ = {dbic:+.0f}')
         if dip is not None:
             txt += f'\ndip $p$ = {dp:.2f} ({"unimodal" if dp > 0.05 else "multimodal"})'
-        a.text(0.03, 0.97, txt, transform=a.transAxes, va='top', ha='left', fontsize=8,
+        a.text(0.03, 0.97, txt, transform=a.transAxes, va='top', ha='left', fontsize=12,
                bbox=dict(boxstyle='round', fc='white', ec='0.7', alpha=0.85))
     except Exception:
         pass
     a.set_xlabel(mlabel + munit); a.set_ylabel('N stars')
-    a.set_title('Metallicity distribution'); a.legend(fontsize=8)
+    a.set_title('Metallicity distribution'); a.legend(fontsize=12)
 
     # (3) projected-radius histogram
     a = ax[0, 2]
@@ -3990,7 +4197,7 @@ def make_data_overview(catalog=None, feh_quality_keep=None,
     a.scatter(R[mr], vlos[mr], s=9, color=cMR, alpha=0.5, label='metal-rich')
     a.axhline(0, color='k', ls='--', lw=1)
     a.set_xlabel('$R$  [kpc]'); a.set_ylabel(r'$v_{\rm los}$  [km s$^{-1}$]')
-    a.set_title('Kinematics: velocity vs radius'); a.legend(fontsize=8)
+    a.set_title('Kinematics: velocity vs radius'); a.legend(fontsize=12)
 
     # (6) chemodynamics: velocity vs metallicity, coloured by radius
     a = ax[1, 2]
@@ -4058,7 +4265,7 @@ def make_dispersion_profile(out=None, nbins=8, use_gaia=False):
 
     ax.set_xlabel(r'projected radius $R$  [kpc]')
     ax.set_ylabel(r'velocity dispersion  [km s$^{-1}$]')
-    ax.grid(alpha=0.3); ax.legend(fontsize=9)
+    ax.grid(alpha=0.3); ax.legend(fontsize=12)
     fig.tight_layout(); fig.savefig(out, dpi=150, bbox_inches='tight'); plt.close(fig)
     print(f"--> Saved {out}  ({len(Rc)} radial bins)")
     return out
@@ -4232,10 +4439,10 @@ def make_gaia_skymap(out=None, cuts=(100, 90, 50, 25), arrays=None):
                         edgecolors='k', linewidths=0.2, label='retained')
         ax.set_xlabel(r'$\Delta$RA [deg]'); ax.set_ylabel(r'$\Delta$Dec [deg]')
         ax.text(0.03, 0.96, f'tightest {pct}%   ({int(mem.sum())} stars)',
-                transform=ax.transAxes, va='top', ha='left', fontsize=11,
+                transform=ax.transAxes, va='top', ha='left', fontsize=12,
                 bbox=dict(boxstyle='round', fc='white', ec='0.7', alpha=0.85))
         if k == 0:
-            ax.legend(fontsize=9, loc='lower right')
+            ax.legend(fontsize=12, loc='lower right')
         ax.invert_xaxis(); ax.set_aspect('equal', 'datalim'); ax.grid(alpha=0.25)
     for extra in flat_axes[n:]:
         extra.set_visible(False)
@@ -4309,13 +4516,13 @@ def make_action_space(out=None, chain_file="cont_chain.npy", arrays=None):
         oi = np.argsort(Jr); b = np.array_split(oi, 8)
         jm = [np.median(Jr[ix]) for ix in b]; fm = [np.median(feh[ix]) for ix in b]
         axL.plot(jm, fm, 'r-o', lw=2, label='running median')
-        axL.legend(fontsize=9)
+        axL.legend(fontsize=12)
     axL.set_xscale('log')
     axL.set_xlabel(r'radial action $J_r$  [kpc km s$^{-1}$]')
     axL.set_ylabel(r'[Fe/H]')
     # in-axes labels rather than set_title (titles are carried by the LaTeX caption)
     axL.text(0.03, 0.05, 'metallicity vs radial action', transform=axL.transAxes,
-             va='bottom', ha='left', fontsize=10,
+             va='bottom', ha='left', fontsize=12,
              bbox=dict(boxstyle='round', fc='white', ec='0.7', alpha=0.85))
     axL.grid(alpha=0.25)
 
@@ -4323,7 +4530,7 @@ def make_action_space(out=None, chain_file="cont_chain.npy", arrays=None):
     axR.set_xscale('log'); axR.set_yscale('log')
     axR.set_xlabel(r'radial action $J_r$'); axR.set_ylabel(r'vertical action $J_z$')
     axR.text(0.03, 0.05, 'action components', transform=axR.transAxes,
-             va='bottom', ha='left', fontsize=10,
+             va='bottom', ha='left', fontsize=12,
              bbox=dict(boxstyle='round', fc='white', ec='0.7', alpha=0.85))
     cb = fig.colorbar(sc, ax=axR, fraction=0.046, pad=0.02); cb.set_label('[Fe/H]')
     axR.grid(alpha=0.25)
@@ -4387,7 +4594,7 @@ def make_framework_comparison(out="figure_framework_comparison.png", chains=None
                 label=r'AP25 published: $0.39^{+0.23}_{-0.26}$')
     axL.axvline(1.0, color='k', ls=':', lw=1.0)
     axL.text(1.0, 0.985, ' NFW cusp $\\gamma=1$', transform=axL.get_xaxis_transform(),
-             fontsize=8, va='top', color='k')
+             fontsize=12, va='top', color='k')
     for (lbl, g, c), (_, p50, lo, hi, _) in zip(loaded, meds):
         kde = gaussian_kde(g)
         y = kde(gg)
@@ -4398,7 +4605,7 @@ def make_framework_comparison(out="figure_framework_comparison.png", chains=None
     axL.set_xlim(0, 1.9); axL.set_ylim(bottom=0)
     axL.set_xlabel(r'DM inner slope $\gamma$'); axL.set_ylabel('posterior density')
     axL.set_title('Sculptor DM inner slope across the framework hierarchy')
-    axL.legend(fontsize=8.5, loc='upper right'); axL.grid(alpha=0.25)
+    axL.legend(fontsize=12, loc='upper right'); axL.grid(alpha=0.25)
 
     # RIGHT: forest plot
     ylabels = []
@@ -4413,7 +4620,7 @@ def make_framework_comparison(out="figure_framework_comparison.png", chains=None
     axR.axvspan(glo, ghi, color='0.6', alpha=0.15)
     axR.axvline(1.0, color='k', ls=':', lw=1.0)
     axR.set_yticks([y for y, _ in ylabels])
-    axR.set_yticklabels([l for _, l in ylabels], fontsize=8.5)
+    axR.set_yticklabels([l for _, l in ylabels], fontsize=12)
     axR.set_xlim(0, 1.9); axR.set_ylim(-0.7, len(meds) + 0.7)
     axR.set_xlabel(r'$\gamma$  (median, 68% CI)')
     axR.set_title('Same Tolstoy+2023 sample'); axR.grid(alpha=0.25, axis='x')
@@ -5183,7 +5390,7 @@ def make_figure1_two_galaxy(galaxies=('sculptor', 'fornax'), out="figure1_two_ga
             ax = axes[i][0]
             ax.hist(feh, bins=30, color='steelblue', alpha=0.8, edgecolor='white', linewidth=0.4)
             ax.axvline(np.median(feh), color='k', ls=':', lw=1.3, label=f'median = {np.median(feh):.2f}')
-            ax.set_xlabel(mlabel); ax.set_ylabel('N stars'); ax.legend(fontsize=8)
+            ax.set_xlabel(mlabel); ax.set_ylabel('N stars'); ax.legend(fontsize=12)
             ax.set_title(f'{gal_disp}: metallicity distribution')
             # col 1: velocity vs radius, colored by metallicity
             ax = axes[i][1]
@@ -5234,13 +5441,13 @@ def make_wp11_figure(flat, out="figure_wp11.png"):
     sc = axL.scatter(10 ** lr[order], 10 ** lM[order], c=dens[order], s=7,
                      cmap='hot_r', vmin=0.0, vmax=1.0, edgecolors='none')
     cb = fig.colorbar(sc, ax=axL, fraction=0.046, pad=0.02)
-    cb.set_label('Prob', fontsize=9)
+    cb.set_label('Prob', fontsize=12)
     r0 = np.median(d['rh1']); M0 = np.median(d['M1'])
     rr = np.array([np.median(d['rh1']) * 0.45, np.median(d['rh2']) * 1.7])
     axL.plot(rr, M0 * (rr / r0) ** 2, 'b:', lw=1.6)                 # slope 2 (cusp)
     axL.plot(rr, M0 * (rr / r0) ** 3, 'b--', lw=1.6)               # slope 3 (core)
-    axL.text(0.04, 0.96, r'slope=2 (cusp)', transform=axL.transAxes, fontsize=9, color='b', va='top')
-    axL.text(0.04, 0.90, r'slope=3 (core)', transform=axL.transAxes, fontsize=9, color='b', va='top')
+    axL.text(0.04, 0.96, r'slope=2 (cusp)', transform=axL.transAxes, fontsize=12, color='b', va='top')
+    axL.text(0.04, 0.90, r'slope=3 (core)', transform=axL.transAxes, fontsize=12, color='b', va='top')
     axL.set_xscale('log'); axL.set_yscale('log')
     xlo, xhi = GAL.get('wp11_xlim', (2.0, 2.75))                  # galaxy-aware panel range (log10)
     ylo, yhi = GAL.get('wp11_ylim', (6.3, 7.9))
@@ -5266,7 +5473,7 @@ def make_wp11_figure(flat, out="figure_wp11.png"):
     axR.hist(d['Gamma'], 60, density=True, color='crimson', histtype='step', lw=2, label='Scl')
     axR.axvline(2.0, color='k', ls=':', lw=1.5)
     axR.axvline(g50, color='crimson', lw=1.0, alpha=0.6)
-    axR.text(2.02, 0.96, r'NFW cusp', transform=axR.get_xaxis_transform(), fontsize=8, va='top')
+    axR.text(2.02, 0.96, r'NFW cusp', transform=axR.get_xaxis_transform(), fontsize=12, va='top')
     axR.set_xlabel(r'$\Gamma\equiv\Delta\log_{10}M/\Delta\log_{10}r$')
     axR.set_ylabel('probability')
     # In-axes annotation rather than set_title: on a two-panel figure the right panel's title
@@ -5274,9 +5481,9 @@ def make_wp11_figure(flat, out="figure_wp11.png"):
     axR.text(0.97, 0.97,
              f'$\\Gamma={g50:.2f}^{{+{g84-g50:.2f}}}_{{-{g50-g16:.2f}}}$\n'
              f'excl. NFW: {100*s_excl:.1f}%',
-             transform=axR.transAxes, va='top', ha='right', fontsize=11,
+             transform=axR.transAxes, va='top', ha='right', fontsize=12,
              bbox=dict(boxstyle='round', fc='white', ec='0.7', alpha=0.85))
-    axR.legend(fontsize=9, loc='center right'); axR.grid(alpha=0.25)
+    axR.legend(fontsize=12, loc='center right'); axR.grid(alpha=0.25)
     fig.tight_layout(); fig.savefig(out, dpi=150, bbox_inches='tight'); plt.close(fig)
     print(f"--> Saved {out}")
 
@@ -5381,10 +5588,10 @@ def run_membership_robustness(dmu_pcts=(100, 90, 75, 50, 25), nsteps=8000, nproc
     ax.axhspan(np.min(glo), np.max(ghi), color='navy', alpha=0.08)
     ax.axhline(2.0, color='k', ls=':', lw=1.3, label=r'NFW cusp ($\Gamma=2$)')
     for pct, n, g, _, _ in rows:
-        ax.annotate(f'N={n}', (pct, g), textcoords='offset points', xytext=(0, 10), fontsize=8, ha='center')
+        ax.annotate(f'N={n}', (pct, g), textcoords='offset points', xytext=(0, 10), fontsize=12, ha='center')
     ax.invert_xaxis()          # tighter cuts (smaller %) to the right
     ax.set_xlabel(xlabel); ax.set_ylabel(r'mass-profile slope $\Gamma$')
-    ax.legend(fontsize=9); ax.grid(alpha=0.3)
+    ax.legend(fontsize=12); ax.grid(alpha=0.3)
     fig.tight_layout(); fig.savefig(out, dpi=150, bbox_inches='tight'); plt.close(fig)
     print(f"\n--> Saved {out}")
     spread = np.max(g50) - np.min(g50)
@@ -5456,11 +5663,11 @@ def run_pop3_robustness(feh_cuts=(None, -3.00, -2.75, -2.50), nsteps=8000, nproc
                label=r'$\Gamma$ (all stars)')
     for x, r in zip(xs, rows):
         ax.annotate(f'N={r[1]}', (x, r[3]), textcoords='offset points', xytext=(0, 11),
-                    fontsize=8, ha='center')
+                    fontsize=12, ha='center')
     ax.set_xticks(xs); ax.set_xticklabels(labels)
     ax.set_xlabel(r'very-metal-poor floor applied to the sample')
     ax.set_ylabel(r'mass-profile slope $\Gamma$')
-    ax.legend(fontsize=9); ax.grid(alpha=0.3)
+    ax.legend(fontsize=12); ax.grid(alpha=0.3)
     fig.tight_layout(); fig.savefig(out, dpi=150, bbox_inches='tight'); plt.close(fig)
     print(f"\n--> Saved {out}")
     dmax = float(np.max(np.abs(g50 - g_base)))
@@ -5757,6 +5964,28 @@ if __name__ == "__main__":
     _ap.add_argument("--nsub", type=int, default=0,
                      help="fit a random subsample of N stars (0 = all ~1339; try 400 "
                           "for a faster laptop first pass)")
+    _ap.add_argument("--menc", action="store_true",
+                     help="Enclosed mass at r = 0.20 kpc from each converged chain, propagated "
+                          "through the posterior. Quantifies the claim that the frameworks "
+                          "agree where their density profiles cross and diverge outside it. "
+                          "Requires --dm5, --gravsphere and --wp11 to have been run.")
+    _ap.add_argument("--subpop-pa", action="store_true", dest="subpop_pa",
+                     help="Position angles of the two metallicity subcomponents, with bootstrap "
+                          "errors, and their misalignment. Tests the specific mechanism Genina "
+                          "et al. (2018) blame for spurious cores, which is misalignment rather "
+                          "than elongation. Also compares the all-star PA against the Munoz+2018 "
+                          "photometric value to bound the geometry imposed by spectroscopic "
+                          "targeting.")
+    _ap.add_argument("--splitfrac", type=float, default=None, metavar="F",
+                     help="Fraction of the sample assigned to the METAL-POOR arm of the mock "
+                          "gates, so the [Fe/H] cut sits at the 100F-th percentile. Default "
+                          "None reproduces the median (F=0.5). The discrete-truth mocks are "
+                          "built with f_MR = 0.34, so a median split over-populates the "
+                          "metal-rich arm with extended metal-poor stars and flattens the "
+                          "recovered slope; --splitfrac 0.66 matches the mock's own truth and "
+                          "separates that artifact from genuine decomposition bias. Affects "
+                          "--biasgate, --revgate and --gatediag only; the real two-population "
+                          "estimator fits the mixing fraction rather than splitting.")
     _ap.add_argument("--goodmode", action="store_true",
                      help="Seed the continuous-DF walkers in the higher-likelihood mode "
                           "(CONT_GOOD_MODE) instead of the generic template. The posterior "
@@ -5834,6 +6063,14 @@ if __name__ == "__main__":
             run_continuous_smoke()
         sys.exit(0)
 
+    if _args.menc:                                    # enclosed mass across chains, then exit
+        run_enclosed_mass()
+        sys.exit(0)
+
+    if _args.subpop_pa:                               # subpopulation PAs, then exit
+        run_subpop_pa(split_frac=_args.splitfrac)
+        sys.exit(0)
+
     if _args.slide:                                   # sliding-threshold test, then exit
         run_sliding_metallicity_test()
         sys.exit(0)
@@ -5843,15 +6080,15 @@ if __name__ == "__main__":
         sys.exit(0)
 
     if _args.biasgate:                                # bias gate on mocks, then exit
-        run_bias_gate()
+        run_bias_gate(split_frac=_args.splitfrac)
         sys.exit(0)
 
     if _args.revgate:                                 # reverse bias gate on mocks, then exit
-        run_reverse_bias_gate()
+        run_reverse_bias_gate(split_frac=_args.splitfrac)
         sys.exit(0)
 
     if _args.gatediag:                                # gate control tests on mocks, then exit
-        run_gate_diagnostics()
+        run_gate_diagnostics(split_frac=_args.splitfrac)
         sys.exit(0)
 
     if _args.shrinkage:                               # prior-vs-convergence test, then exit
