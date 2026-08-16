@@ -4012,11 +4012,8 @@ def run_gate_diagnostics(gamma_true=(0.4, 1.0), n_real=40, out="figure_gate_diag
         ax.set_xlim(-0.6, 3.6); ax.set_ylabel(r'Recovered $\gamma$')
         ax.margins(y=0.30)                 # room for the labels at both extremes
         ax.grid(alpha=0.3)
-        # Panel identity in-axes (titles were removed paper-wide). The truth-line legend is
-        # shared below the figure: in-axes it covered the leftmost point.
-        ax.text(0.02, 0.95, f'$\\gamma_{{\\rm true}}={gt}$', transform=ax.transAxes,
-                va='top', ha='left', fontsize=12,
-                bbox=dict(boxstyle='round', fc='white', ec='0.7', alpha=0.9))
+        # No in-axes gamma_true badge: the per-panel legend already carries the truth value
+        # in its dashed-line entry, so the badge was redundant and sat on the data.
     axes[-1, 0].set_xticklabels(labels, fontsize=12)     # x labels on the bottom panel only
     for _ax in axes.ravel():          # legend ABOVE each panel: in-axes it covered points
         _ax.legend(fontsize=12, loc='lower center', bbox_to_anchor=(0.5, 1.01),
