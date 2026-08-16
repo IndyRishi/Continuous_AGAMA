@@ -176,7 +176,7 @@ GALAXIES = {
         # keep only Fornax rows. Coordinates are sexagesimal (parsed automatically).
         target_col='Target', target_keep=('for', 'fnx'),
         # 'Mmb' is a membership probability; VizieR stores it on a percentage scale and the
-        # loader normalises to [0,1] before applying this threshold. Keep probable members.
+        # loader normalizes to [0,1] before applying this threshold. Keep probable members.
         feh_quality_keep=None, mem_keep=None, mem_min=0.5,
         # The averaged <SigMg> column in the '/stars' table is populated for only 459 of the
         # 2633 Fornax stars. Averaging the per-exposure '/tables' entries instead recovers
@@ -405,7 +405,7 @@ def fetch_walker_data():
     # matching the erroneous Figure 1 output exactly.  Sculptor's true σ_los is ~9 km/s.
     if df["P_mem_1D"].max() > 1.0:
         print(f"  --> Mmb max = {df['P_mem_1D'].max():.0f}: "
-              "percentage scale detected; normalising to [0, 1].")
+              "percentage scale detected; normalizing to [0, 1].")
         df["P_mem_1D"] = df["P_mem_1D"] / 100.0
 
     coords = SkyCoord(df["RA_J2000"], df["Dec_J2000"],
@@ -1004,7 +1004,7 @@ def dm_potential_5p(gamma, rs, log_MDM, alpha, eta):
         rho(r) = rho0 (r/rs)^-gamma [1+(r/rs)^alpha]^((gamma-eta)/alpha) exp[-(r/rcut)^xi]
     Free: {log10 M_DM, rs, alpha, eta (outer slope), gamma (inner slope)};
     rcut=20 kpc and xi=1 fixed. AGAMA's Spheroid 'beta' is the paper's outer slope eta.
-    Mass is normalised to the total M_DM (within the truncation).
+    Mass is normalized to the total M_DM (within the truncation).
     """
     return agama.Potential(type='Spheroid', mass=10.0**log_MDM, scaleRadius=rs,
                            gamma=gamma, beta=eta, alpha=alpha,
@@ -1135,7 +1135,15 @@ def agama_binned_pops(R, vlos, label, verr, nbins=6):
     return pops
 
 
-def agama_lnprob_jeans(theta, pops):
+# Osipkov-Merritt anisotropy radius for the spherical Jeans fit. Module level so that
+# --ra can sweep it: the isotropic sigma_los-only profile scan prefers gamma < 0.9 at 2
+# sigma, while this fit at r_a = 1.5 returns gamma ~ 0.97, so the gap between them is a
+# candidate anisotropy artifact rather than a data disagreement. Large r_a approaches the
+# isotropic limit; r_a = inf IS isotropic.
+JEANS_RA = 1.5
+
+
+def agama_lnprob_jeans(theta, pops, r_a=None):
     """Flat priors x Gaussian likelihood on binned sigma_los(R), for a gNFW DM profile.
     theta = (gamma, log10 r_s, log10 M_DM); the transition/outer slopes are FIXED to
     gNFW (alpha=1, eta=3) and the anisotropy to r_a=1.5. This is deliberate: the ~12
@@ -1143,6 +1151,10 @@ def agama_lnprob_jeans(theta, pops):
     mass-anisotropy degeneracy that motivates the action-DF method), so we fit the
     well-constrained gNFW slope -- the same parameter space as the MLE."""
     gamma, log_rs, log_MDM = theta
+    # r_a arrives as an emcee arg rather than being read from the module global: worker
+    # processes on spawn platforms (Windows, macOS) re-import this module and would reset
+    # the global to its default, silently fitting r_a = 1.5 no matter what was requested.
+    r_a = JEANS_RA if r_a is None else r_a
     if not (JEANS_GAMMA_PRIOR[0] <= gamma <= JEANS_GAMMA_PRIOR[1]
             and -3.0 <= log_rs <= 1.0 and 7.0 <= log_MDM <= 11.0):
         return -np.inf
@@ -1152,7 +1164,7 @@ def agama_lnprob_jeans(theta, pops):
         for r_star, rc, so, se in pops:
             tr = agama.Density(type='Plummer', scaleRadius=r_star, mass=1.0)
             df = agama.DistributionFunction(type='QuasiSpherical', potential=pot,
-                                            density=tr, beta0=0.0, r_a=1.5)
+                                            density=tr, beta0=0.0, r_a=r_a)
             gm = agama.GalaxyModel(pot, df)
             sig = np.sqrt(gm.moments(np.column_stack([rc, np.zeros_like(rc)]),
                                      dens=False, vel2=True)[:, 2])
@@ -1251,7 +1263,7 @@ def run_dm5_chain(nwalkers=24, nsteps=4000, nproc=None, backend="dm5.h5", resume
     resume_ok = bool(resume and bk is not None and os.path.exists(backend) and bk.iteration > 0)
     pool = _make_pool(nproc)
     try:
-        s = emcee.EnsembleSampler(nw, ndim, agama_lnprob_jeans, args=(pops,),
+        s = emcee.EnsembleSampler(nw, ndim, agama_lnprob_jeans, args=(pops, JEANS_RA),
                                   moves=moves, pool=pool, backend=bk)
         if resume_ok:
             print(f"    [MCMC] resuming from {bk.iteration} stored steps.")
@@ -1799,7 +1811,7 @@ def run_action_df_modeling(high_fidelity=False, mcmc_nwalkers=32, mcmc_nsteps=30
                      mec='k', mew=0.6, label=lbl)
     axD.set_xscale('log'); axD.set_yscale('log')
     axD.set_xlabel('Radius $r$ (kpc)'); axD.set_ylabel(r'$M(<r)$ ($M_\odot$)')
-    axD.set_title('(d) Enclosed mass vs. real literature')
+    axD.set_title('(d) Enclosed mass versus literature')
     axD.legend(fontsize=12, loc='lower right'); axD.grid(alpha=0.2, which='both')
 
     mode = 'per-star MCMC' if chain is not None else 'MLE'
@@ -2019,7 +2031,7 @@ def run_gravsphere_chain(nwalkers=24, nsteps=3000, nproc=None, backend="gravsphe
         fig, ax = plt.subplots(figsize=(7, 4.5))
         ax.fill_between(rr, blo, bhi, color='teal', alpha=0.25); ax.plot(rr, bmid, color='teal', lw=2)
         ax.axhline(0, color='k', ls='--', lw=1); ax.set_xscale('log')
-        ax.set_xlabel(r'$r$ [kpc]'); ax.set_ylabel(r'anisotropy $\beta(r)$')
+        ax.set_xlabel(r'Radius $r$ (kpc)'); ax.set_ylabel(r'Anisotropy $\beta(r)$')
         ax.grid(alpha=0.3, which='both')
         fig.savefig(_gf("figure_gravsphere_beta.png"), dpi=140, bbox_inches='tight'); plt.close(fig)
         print("  saved figure_gravsphere_beta.png")
@@ -2066,7 +2078,7 @@ def run_gravsphere_chain(nwalkers=24, nsteps=3000, nproc=None, backend="gravsphe
 #   python <thisfile>.py --crosscheck --repo gravsphere --mcmc   (+ posterior surface)
 # Checks: (1) sigma_los(R) our integrating-factor solver vs their theta-substitution
 # solver; (2) theory VSPs; (3) observed-VSP estimators (VSP2 differs by a documented
-# <R^2> normalisation, verified at run time); (4) --mcmc: likelihood-surface equivalence
+# <R^2> normalization, verified at run time); (4) --mcmc: likelihood-surface equivalence
 # across the posterior (residual << Delta-chi^2=1) plus an illustrative twin-MCMC run.
 
 def _gsx_load_reference(repo=None):
@@ -2167,7 +2179,7 @@ def run_gravsphere_crosscheck(repo=None, do_mcmc=False, steps=500):
     print(f"    VSP1: ours/reference = {mine1/ref1:.12f}   {'PASS (identical)' if ok1 else 'FAIL'}")
     print(f"    VSP2: reference x <R^2> / ours = {ref2*np.mean(R**2)/mine2:.12f}   "
           f"{'PASS (convention verified)' if ok2 else 'FAIL'}")
-    print("    (reference's richfair_vsp2 normalises by <R^2>; ours is the direct unbiased")
+    print("    (reference's richfair_vsp2 normalizes by <R^2>; ours is the direct unbiased")
     print("     estimator of the same theory integral vs2 = <v^4 R^2>/2pi used in our likelihood)")
     ok_est = ok1 and ok2
 
@@ -2274,7 +2286,7 @@ def _gsx_mcmc_check(RF, steps=500, nwalk=14, seed=1):
 # The per-star projectedDF likelihood over 1339 stars is a cluster-scale computation;
 # this sandbox only smoke-tests the machinery on a mock.
 _trapz = getattr(np, "trapezoid", getattr(np, "trapz", None))   # NumPy 2.x renamed trapz
-REGION_RMAX = 2.0        # kpc, farthest observed star / normalisation region
+REGION_RMAX = 2.0        # kpc, farthest observed star / normalization region
 
 # ── Parameter layout (paper Eq.12 order) ─────────────────────────────────────
 PARAM_NAMES = [
@@ -2339,7 +2351,7 @@ def _gauss(x, mu, sig):
     return np.exp(-0.5 * ((x - mu) / sig) ** 2) / (np.sqrt(2 * np.pi) * sig)
 
 
-_RGRID = np.logspace(-2.3, np.log10(REGION_RMAX), 14)   # for normalisation integrals
+_RGRID = np.logspace(-2.3, np.log10(REGION_RMAX), 14)   # for normalization integrals
 
 
 def _proj_norm(gm, Omega_grid=None):
@@ -2380,7 +2392,7 @@ def ap25_lnlike_full(theta, data):
     # Selection function: use precomputed arrays if attached (multiprocessing-safe,
     # since setting a module global does NOT propagate to spawned workers), else flat.
     #   omega_star : per-star omega(R_i, G_i), length N    (numerator)
-    #   Omega_grid : Omega(R)=int omega dG on _RGRID       (normalisation)
+    #   Omega_grid : Omega(R)=int omega dG on _RGRID       (normalization)
     omega_star = data.get('omega_star')
     if omega_star is None:
         omega_star = OMEGA_R(R)
@@ -2657,7 +2669,7 @@ def _fetch_tolstoy2023(catalog="J/A+A/675/A49", cols=None,
                 # those would keep essentially the whole catalogue, foreground included.
                 if np.nanmax(pv) > 1.0:
                     print(f"    [loader] membership '{mcol}' max = {np.nanmax(pv):.0f}: "
-                          "percentage scale detected; normalising to [0, 1].")
+                          "percentage scale detected; normalizing to [0, 1].")
                     pv = pv / 100.0
                 keep = np.isfinite(pv) & (pv >= mem_min)
                 sel &= keep
@@ -2705,8 +2717,8 @@ def _semi_major_axis_radius(ra, dec, D_KPC=None):
 # ── SELECTION FUNCTION omega(R,G)  (AP24-style; Arroyo-Polonio+24) ────────────
 # The selection is the ratio of the SPECTROSCOPIC sample density to the PHOTOMETRIC
 # PARENT density, via Gaussian kernels:  omega(R,G) ∝ KDE_spec / KDE_parent. Only the
-# SHAPE matters (a constant cancels between the per-star numerator and the normalisation),
-# so we peak-normalise. attach_selection() precomputes per-star omega and the Omega(R)
+# SHAPE matters (a constant cancels between the per-star numerator and the normalization),
+# so we peak-normalize. attach_selection() precomputes per-star omega and the Omega(R)
 # grid and stores them IN `data` (data['omega_star'], data['Omega_grid']) -- essential
 # because on Windows the multiprocessing workers re-import this module and would NOT see
 # a module-global selection, whereas arrays inside `data` are pickled to every worker.
@@ -2759,27 +2771,47 @@ def wp11_photometric_parent(radius_deg=0.6, g_range=(17.0, 20.5), bp_rp_range=No
     approximate translation between (V, I) and Gaia G. Served via VizieR (I/355/gaiadr3)
     rather than the ESA TAP endpoint, which times out on cone searches of this size.
     Returns (R_pc, G).
+
+    The query is CACHED to disk on first use and read from the cache thereafter. This is a
+    reproducibility requirement, not a convenience: repeating the identical cone search on
+    successive days returned 16793 and then 15552 rows, so the reconstructed w(R) — and with
+    it the fitted half-light radii — is not stable against re-querying the service. Shipping
+    the cache with the archived pipeline freezes the parent that produced the published
+    numbers. Delete the cache file to force a re-fetch.
     """
-    from astroquery.vizier import Vizier
     from astropy.coordinates import SkyCoord
     import astropy.units as u
-    cols = ['RA_ICRS', 'DE_ICRS', 'Gmag'] + (['BP-RP'] if bp_rp_range else [])
-    filt = {'Gmag': f'{g_range[0]}..{g_range[1]}'}
-    if bp_rp_range:
-        filt['BP-RP'] = f'{bp_rp_range[0]}..{bp_rp_range[1]}'
-    V = Vizier(columns=cols, column_filters=filt, row_limit=-1)
-    centre = SkyCoord(RA0_DEG, DEC0_DEG, unit='deg')
-    res = V.query_region(centre, radius=radius_deg * u.deg, catalog='I/355/gaiadr3')
-    if not len(res):
-        raise RuntimeError('VizieR returned no Gaia DR3 rows for this field')
-    t = res[0]
-    ra = np.array(t['RA_ICRS'], float); dec = np.array(t['DE_ICRS'], float)
-    G = np.array(t['Gmag'], float)
+
+    # _gf already prefixes the active galaxy, so the name is not repeated here.
+    cache = _gf(f"gaia_parent_{radius_deg}deg_G{g_range[0]}-{g_range[1]}"
+                f"{'_col' if bp_rp_range else ''}.csv")
+    if os.path.exists(cache):
+        df = pd.read_csv(cache)
+        ra, dec, G = (np.asarray(df[c], float) for c in ('ra', 'dec', 'gmag'))
+        print(f"  [parent cache] {len(ra)} rows from {os.path.basename(cache)} "
+              f"(delete to force a re-fetch from VizieR)")
+    else:
+        from astroquery.vizier import Vizier
+        cols = ['RA_ICRS', 'DE_ICRS', 'Gmag'] + (['BP-RP'] if bp_rp_range else [])
+        filt = {'Gmag': f'{g_range[0]}..{g_range[1]}'}
+        if bp_rp_range:
+            filt['BP-RP'] = f'{bp_rp_range[0]}..{bp_rp_range[1]}'
+        V = Vizier(columns=cols, column_filters=filt, row_limit=-1)
+        centre = SkyCoord(RA0_DEG, DEC0_DEG, unit='deg')
+        res = V.query_region(centre, radius=radius_deg * u.deg, catalog='I/355/gaiadr3')
+        if not len(res):
+            raise RuntimeError('VizieR returned no Gaia DR3 rows for this field')
+        t = res[0]
+        ra = np.array(t['RA_ICRS'], float); dec = np.array(t['DE_ICRS'], float)
+        G = np.array(t['Gmag'], float)
+        pd.DataFrame({'ra': ra, 'dec': dec, 'gmag': G}).to_csv(cache, index=False)
+        print(f"  [parent] Gaia DR3 via VizieR: {len(ra)} rows fetched and cached to "
+              f"{os.path.basename(cache)}")
+
     ok = np.isfinite(ra) & np.isfinite(dec) & np.isfinite(G)
     R_pc = _semi_major_axis_radius(ra[ok], dec[ok]) * 1000.0
-    print(f"  [parent] Gaia DR3 via VizieR: {len(R_pc)} photometric candidates within "
-          f"{radius_deg} deg of {GAL['name']} (G in {g_range}); median projected radius "
-          f"{np.median(R_pc):.0f} pc")
+    print(f"  [parent] {len(R_pc)} photometric candidates within {radius_deg} deg of "
+          f"{GAL['name']} (G in {g_range}); median projected radius {np.median(R_pc):.0f} pc")
     return R_pc, G[ok]
 
 
@@ -2787,7 +2819,7 @@ def wp11_attach_selection(data, parent_R_pc, bw=0.25, n_grid=400):
     """Attach WP11's spectroscopic completeness w(R) to a WP11 data dict.
 
     Stores the per-star value w(R_i) and w on a radial grid; the grid is needed because with
-    a non-uniform selection the Plummer radial pdf is no longer normalised, so each
+    a non-uniform selection the Plummer radial pdf is no longer normalized, so each
     subcomponent term must be divided by \\int w(R) p_k(R) dR, which depends on the fitted
     half-light radius and must therefore be evaluated inside the likelihood.
     """
@@ -2807,7 +2839,7 @@ def wp11_attach_selection(data, parent_R_pc, bw=0.25, n_grid=400):
 
 
 def build_radial_selection(spec_R, parent_R, bw=0.3, floor=1e-3):
-    """Omega_R(R): radial completeness ∝ KDE_spec(R)/KDE_parent(R), peak-normalised.
+    """Omega_R(R): radial completeness ∝ KDE_spec(R)/KDE_parent(R), peak-normalized.
     Zero where the parent is empty (no tracers observed there)."""
     ks, kp = _kde(spec_R, bw), _kde(parent_R, bw)
     Rmax_par = np.max(parent_R)
@@ -2850,7 +2882,7 @@ def build_2d_selection(spec_R, spec_G, parent_R, parent_G, bw=0.3, floor=1e-3):
 def attach_selection(data, parent_R, parent_G=None, mode='radial',
                      R_grid=None, bw=0.3, floor=1e-3):
     """Compute the AP24-style selection and ATTACH it to `data` as precomputed arrays
-    (data['omega_star'] per star, data['Omega_grid'] on the normalisation grid _RGRID)
+    (data['omega_star'] per star, data['Omega_grid'] on the normalization grid _RGRID)
     so the parallel likelihood uses it correctly. Returns the updated `data`.
       mode='radial' (recommended; needs only projected radii) or '2d' (needs real Gmag).
       parent_R/parent_G come from gaia_rgb_parent() or your own photometric catalogue."""
@@ -3077,7 +3109,7 @@ def make_ap25_figure4(flat, out="figure_ap25_fig4.png", n_draw=400, seed=0):
     ax2.fill_between(rgrid, rho_star * 0.8, rho_star * 1.2, color='royalblue', alpha=0.15,
                      label=r'Stellar (Plummer, $r_e=0.28$ kpc)')
     ax2.set_xscale('log'); ax2.set_yscale('log')
-    ax2.set_xlabel(r'$r\ \ [\mathrm{kpc}]$')
+    ax2.set_xlabel(r'Radius $r$ (kpc)')
     ax2.set_ylabel(r'$\rho_{\rm DM}(r)\ \ [M_\odot\,\mathrm{kpc}^{-3}]$')
     ax2.legend(fontsize=12, loc='lower left'); ax2.grid(alpha=0.25, which='both')
 
@@ -3193,7 +3225,7 @@ def make_fig4_all_chains(out=None, chains=None, n_draw=200):
         ax.plot(rgrid, ref[ia] * (rgrid / rgrid[ia]) ** ( 0.0), 'k:',  lw=0.9, label=r'core $\gamma=0$')
 
     ax.set_xscale('log'); ax.set_yscale('log')
-    ax.set_xlabel(r'$r$  [kpc]'); ax.set_ylabel(r'$\rho_{\rm DM}(r)$  [$M_\odot\,{\rm kpc}^{-3}$]')
+    ax.set_xlabel(r'Radius $r$ (kpc)'); ax.set_ylabel(r'$\rho_{\rm DM}(r)$  [$M_\odot\,{\rm kpc}^{-3}$]')
     ax.legend(fontsize=12, loc='lower left'); ax.grid(alpha=0.25, which='both')
     fig.tight_layout(); fig.savefig(out, dpi=140, bbox_inches='tight'); plt.close(fig)
     print(f"--> Saved {out}  (frameworks: {', '.join(plotted)})")
@@ -3268,7 +3300,7 @@ def _dip_test(x):
         return None, None
 
 
-def _load_real_feh(catalog=None, feh_quality_keep=None):
+def _load_real_feh(catalog=None, feh_quality_keep=None, require_member=False):
     """(R, vlos_restframe, feh, verr) for the active galaxy's analysis sample.
 
     Where the galaxy config sets mmfs_average, the per-star sample is rebuilt from the
@@ -3276,14 +3308,22 @@ def _load_real_feh(catalog=None, feh_quality_keep=None):
     show the same stars the two-population fit uses (2603 for Fornax, against the 452 the
     /stars table yields once rows without a Mg index are dropped). Non-members are retained
     when a foreground model is in use, again matching the fit.
+
+    require_member=True overrides that and applies the catalogue membership threshold. It is
+    for diagnostics that measure a RAW dispersion rather than fitting a foreground: with
+    f_mem = 0.953 for Fornax, the surviving ~5% of Milky Way stars carry a velocity spread an
+    order of magnitude wider than the dwarf's own, which inflates a directly-computed
+    sigma_los from ~14 to 20-30 km/s. The two-population fit is unaffected because it models
+    that contamination instead of measuring through it.
     """
     catalog = catalog or GAL['catalog']
     fqk = GAL['feh_quality_keep'] if feh_quality_keep is None else feh_quality_keep
     if GAL.get('mmfs_average'):
+        _mm = GAL.get('mem_min') if (require_member or not GAL.get('wp11_foreground')) else None
         ra, dec, vlos, verr, feh, feherr, _m = _fetch_mmfs_averaged(
             catalog, galaxy_prefixes=GAL.get('target_keep', ()),
             index_col=str(GAL['cols']['feh']).strip('<>'),
-            mem_min=(None if GAL.get('wp11_foreground') else GAL.get('mem_min')))
+            mem_min=_mm)
     else:
         ra, dec, vlos, verr, feh, feherr, _g = _fetch_tolstoy2023(
             catalog, GAL.get('cols'), mem_keep=(GAL.get('mem_keep') or ('m',)),
@@ -3348,7 +3388,9 @@ def run_sliding_metallicity_test(catalog=None, feh_quality_keep=None,
     except Exception: pass
     import matplotlib.pyplot as plt
 
-    R, vlos, feh, verr = _load_real_feh(catalog, feh_quality_keep)
+    # Membership-cut sample: this diagnostic measures sigma_los directly rather than
+    # fitting a foreground, so retained non-members would inflate both curves.
+    R, vlos, feh, verr = _load_real_feh(catalog, feh_quality_keep, require_member=True)
     bc, dbic = _unimodality_report(feh)
     dip, dp = _dip_test(feh)
     med = np.median(feh)
@@ -3382,21 +3424,37 @@ def run_sliding_metallicity_test(catalog=None, feh_quality_keep=None,
 
     # Stacked vertically rather than side-by-side: the two panels share no axis, so nothing is
     # lost by stacking, and a column-width float can sit beside the text that discusses it.
+    # Fornax has no [Fe/H]; its chemical discriminant is the Mg index W'. Labels follow the
+    # active galaxy so the same routine serves both.
+    _scl = GAL['name'].lower() == 'sculptor'
+    mlab = '[Fe/H]' if _scl else r"Mg index $W^\prime$"
+    munit = '  [dex]' if _scl else ''
+
     fig, (axL, axR) = plt.subplots(2, 1, figsize=(6.5, 8.4))
     axL.errorbar(thr, sig_mp, yerr=err_mp, fmt='-o', color='royalblue', ms=4, capsize=2,
-                 elinewidth=0.9, label=r'"metal-poor" side ([Fe/H] < thr)')
+                 elinewidth=0.9, label=f'"metal-poor" side ({mlab} < thr)')
     axL.errorbar(thr, sig_mr, yerr=err_mr, fmt='-s', color='crimson', ms=4, capsize=2,
-                 elinewidth=0.9, label=r'"metal-rich" side ([Fe/H] > thr)')
+                 elinewidth=0.9, label=f'"metal-rich" side ({mlab} > thr)')
     axL.axvline(med, color='k', ls='--', lw=1.2, label=f'median split = {med:.2f}')
     # Sample size varies by a factor of ~4 across the sweep; annotate the ends so the reader
     # can see which points are noisy rather than inferring structure from them.
+    # Sample-size labels go in the axes corners rather than beside the endpoint markers,
+    # where a -12pt offset collides with the error bar and clips the digits.
     if n_mp and n_mp[0]:
-        axL.annotate(f'$N$={n_mp[0]}/{n_mr[0]}', xy=(thr[0], sig_mp[0]), fontsize=12,
-                     xytext=(3, -12), textcoords='offset points', color='0.35')
-        axL.annotate(f'$N$={n_mp[-1]}/{n_mr[-1]}', xy=(thr[-1], sig_mp[-1]), fontsize=12,
-                     xytext=(-3, -12), textcoords='offset points', ha='right', color='0.35')
-    axL.set_xlabel('[Fe/H] split threshold  [dex]'); axL.set_ylabel(r'$\sigma_{\rm los}$  [km s$^{-1}$]')
-    axL.legend(fontsize=12); axL.grid(alpha=0.3)
+        axL.text(0.02, 0.04, f'$N$ = {n_mp[0]}/{n_mr[0]}', transform=axL.transAxes,
+                 fontsize=12, color='0.35', ha='left', va='bottom')
+        axL.text(0.98, 0.04, f'$N$ = {n_mp[-1]}/{n_mr[-1]}', transform=axL.transAxes,
+                 fontsize=12, color='0.35', ha='right', va='bottom')
+    axL.set_xlabel(f'{mlab} split threshold{munit}')
+    axL.set_ylabel(r'Velocity dispersion $\sigma_{\rm los}$ (km s$^{-1}$)')
+    axL.margins(y=0.12)
+    # Legend ABOVE the axes: inside the frame it clipped the topmost y tick label.
+    # Galaxy name as the legend title rather than a suptitle: a suptitle above an
+    # already-external legend left a band of white space.
+    _lg = axL.legend(fontsize=12, loc='lower center', bbox_to_anchor=(0.5, 1.01),
+                     ncol=2, framealpha=0.9, title=GAL['name'])
+    _lg.get_title().set_fontsize(13); _lg.get_title().set_style('italic')
+    axL.grid(alpha=0.3)
 
     axR.plot(gammas, dchi2, '-o', color='purple', ms=4)
     axR.axhline(1.0, color='gray', ls=':', lw=1.2, label=r'$\Delta\chi^2=1$ (1$\sigma$)')
@@ -3420,7 +3478,7 @@ def run_sliding_metallicity_test(catalog=None, feh_quality_keep=None,
     print(f"--> Saved {out}")
     _dipmsg = (f", Hartigan dip p = {dp:.3f} ({'unimodal' if dp > 0.05 else 'multimodal'})"
                if dip is not None else "  (install 'diptest' for the Hartigan dip test)")
-    print(f"  [Fe/H] unimodality: bimodality coeff BC = {bc:.3f} "
+    print(f"  {'[Fe/H]' if _scl else 'Mg index'} unimodality: bimodality coeff BC = {bc:.3f} "
           f"({'>' if bc > 0.555 else '<'} 0.555), dBIC(1-2) = {dbic:+.1f} "
           f"({'2-Gaussian' if dbic > 0 else '1-Gaussian'} lower BIC){_dipmsg}")
     print(f"  sigma_los-only inner slope is degenerate: gamma in "
@@ -3486,7 +3544,7 @@ def run_bias_gate(gamma_true=(0.4, 1.0), n_real=40, out="figure_bias_gate.png",
     real analysis, summarised robustly rather than by an unreliable MLE):
       DISCRETE   -- split at the median [Fe/H] into two tracers (the standard method);
       CONTINUOUS -- treat all stars as one tracer (the honest description).
-    Over n_real realisations per truth, report the mean recovered gamma and its bias. A
+    Over n_real realizations per truth, report the mean recovered gamma and its bias. A
     discrete bias exceeding the continuous one demonstrates the two-population split itself
     biases the inferred DM slope. Writes figure_bias_gate.png. (Mocks only; no network.
     For publication, raise n_real and nsteps.)
@@ -3515,7 +3573,7 @@ def run_bias_gate(gamma_true=(0.4, 1.0), n_real=40, out="figure_bias_gate.png",
             gc.append(_gnfw_gamma_posterior([(a, rc, so, se)], seed=s + 991))
         gd, gc = np.array(gd), np.array(gc)
         results[gt] = (gd, gc)
-        print(f"\n  gamma_true = {gt}:  ({n_real} realisations, posterior medians)")
+        print(f"\n  gamma_true = {gt}:  ({n_real} realizations, posterior medians)")
         print(f"    DISCRETE  (2-pop split): <gamma> = {gd.mean():.2f}  bias = {gd.mean()-gt:+.3f} "
               f"+/- {gd.std()/np.sqrt(n_real):.3f}")
         print(f"    CONTINUOUS (all stars) : <gamma> = {gc.mean():.2f}  bias = {gc.mean()-gt:+.3f} "
@@ -3532,12 +3590,16 @@ def run_bias_gate(gamma_true=(0.4, 1.0), n_real=40, out="figure_bias_gate.png",
         ax.hist(gc, bins, color='seagreen', alpha=0.55, label=f'continuous  (bias {gc.mean()-gt:+.2f})')
         ax.axvline(gt, color='k', ls='--', lw=2, label=f'truth $\\gamma$={gt}')
         ax.axvline(gd.mean(), color='crimson', lw=1.5); ax.axvline(gc.mean(), color='seagreen', lw=1.5)
-        ax.set_xlabel(r'recovered $\gamma$ (posterior median)'); ax.set_ylabel('realisations')
+        ax.set_xlabel(r'Recovered $\gamma$ (posterior median)'); ax.set_ylabel('Realizations')
         # in-axes label rather than set_title (titles carried by the LaTeX caption)
         ax.text(0.03, 0.96, f'$\\gamma_{{\\rm true}}={gt}$', transform=ax.transAxes,
                 va='top', ha='left', fontsize=12,
                 bbox=dict(boxstyle='round', fc='white', ec='0.7', alpha=0.85))
-        ax.legend(fontsize=12)
+        # Legend below the axes: the three entries are long enough that any in-axes
+        # placement overlapped the gamma_true label in the opposite corner.
+        ax.margins(y=0.12)
+        ax.legend(fontsize=12, loc='upper center', bbox_to_anchor=(0.5, -0.16),
+                  frameon=True, ncol=1)
     fig.tight_layout(); fig.savefig(out, dpi=150, bbox_inches='tight'); plt.close(fig)
     print(f"\n--> Saved {out}")
     return results
@@ -3553,7 +3615,7 @@ def run_enclosed_mass(r=R_PINCH_KPC, nthin=400):
     profiles cross and diverge outside it. That claim is qualitative unless the mass is
     actually quoted, and it is the one quantity these data constrain well, so it is worth a
     number. Masses are propagated through the posterior rather than evaluated at the median
-    parameters: the gNFW mass is nonlinear in gamma, r_s and the normalisation, so the two
+    parameters: the gNFW mass is nonlinear in gamma, r_s and the normalization, so the two
     differ. Reads the saved chains; writes nothing.
     """
     print("=" * 70)
@@ -3593,7 +3655,7 @@ def run_enclosed_mass(r=R_PINCH_KPC, nthin=400):
 
     # The two-population estimator fits no profile, so there is nothing to evaluate at an
     # arbitrary radius. Its M(r_h,1) is already a posterior quantity at ~0.19 kpc and is
-    # quoted directly. It is a DYNAMICAL mass carrying the Walker+2009 normalisation, not a
+    # quoted directly. It is a DYNAMICAL mass carrying the Walker+2009 normalization, not a
     # DM-only mass, so it is not directly comparable with the two above.
     try:
         d = wp11_derived(np.load(_gf('wp11_chain.npy')))
@@ -3790,7 +3852,7 @@ def run_reverse_bias_gate(gamma_true=(0.4, 1.0), n_real=40, out="figure_reverse_
             gc.append(_gnfw_gamma_posterior([(a, rc, so, se)], seed=s + 991))
         gd, gc = np.array(gd), np.array(gc)
         results[gt] = (gd, gc)
-        print(f"\n  gamma_true = {gt}:  ({n_real} realisations, DISCRETE truth)")
+        print(f"\n  gamma_true = {gt}:  ({n_real} realizations, DISCRETE truth)")
         print(f"    DISCRETE  (2-pop split, matched): <gamma> = {gd.mean():.2f}  "
               f"bias = {gd.mean()-gt:+.3f} +/- {gd.std()/np.sqrt(n_real):.3f}")
         print(f"    CONTINUOUS (all stars, misspec.): <gamma> = {gc.mean():.2f}  "
@@ -3811,11 +3873,15 @@ def run_reverse_bias_gate(gamma_true=(0.4, 1.0), n_real=40, out="figure_reverse_
                 label=f'continuous, misspecified  (bias {gc.mean()-gt:+.2f})')
         ax.axvline(gt, color='k', ls='--', lw=2, label=f'truth $\\gamma$={gt}')
         ax.axvline(gd.mean(), color='crimson', lw=1.5); ax.axvline(gc.mean(), color='seagreen', lw=1.5)
-        ax.set_xlabel(r'recovered $\gamma$ (posterior median)'); ax.set_ylabel('realisations')
+        ax.set_xlabel(r'Recovered $\gamma$ (posterior median)'); ax.set_ylabel('Realizations')
         ax.text(0.03, 0.96, f'$\\gamma_{{\\rm true}}={gt}$ (two discrete populations)',
                 transform=ax.transAxes, va='top', ha='left', fontsize=12,
                 bbox=dict(boxstyle='round', fc='white', ec='0.7', alpha=0.85))
-        ax.legend(fontsize=12)
+        # Legend below the axes: the three entries are long enough that any in-axes
+        # placement overlapped the gamma_true label in the opposite corner.
+        ax.margins(y=0.12)
+        ax.legend(fontsize=12, loc='upper center', bbox_to_anchor=(0.5, -0.16),
+                  frameon=True, ncol=1)
     fig.tight_layout(); fig.savefig(out, dpi=150, bbox_inches='tight'); plt.close(fig)
     print(f"\n--> Saved {out}")
     return results
@@ -3889,7 +3955,7 @@ def run_gate_diagnostics(gamma_true=(0.4, 1.0), n_real=40, out="figure_gate_diag
         nd, nc, sd, sc = (np.array(v) for v in (nd, nc, sd, sc))
         results[gt] = dict(null_disc=nd, null_cont=nc, scr_disc=sd, scr_cont=sc)
 
-        print(f"\n  gamma_true = {gt}   ({n_real} realisations each)")
+        print(f"\n  gamma_true = {gt}   ({n_real} realizations each)")
         print(f"    (1) NULL      one pop, no [Fe/H] structure")
         print(f"          median split  : <gamma> = {nd.mean():.3f}   bias = {nd.mean()-gt:+.3f} "
               f"+/- {nd.std()/np.sqrt(n_real):.3f}")
@@ -3926,17 +3992,29 @@ def run_gate_diagnostics(gamma_true=(0.4, 1.0), n_real=40, out="figure_gate_diag
             v = r[k]
             ax.errorbar(i, v.mean(), yerr=v.std() / np.sqrt(len(v)), fmt='o', color=c,
                         ms=9, capsize=5, lw=2)
-            ax.annotate(f'{v.mean()-gt:+.2f}', (i, v.mean()), textcoords='offset points',
-                        xytext=(0, 13), ha='center', fontsize=12)
+            # Offset the bias label ABOVE or BELOW the whisker depending on which side of
+            # the truth line the point sits, so it never lands on the dashed line or on
+            # the error bar itself.
+            se = v.std() / np.sqrt(len(v))
+            above = v.mean() >= gt
+            ax.annotate(f'{v.mean()-gt:+.2f}',
+                        (i, v.mean() + (se if above else -se)),
+                        textcoords='offset points', xytext=(0, 9 if above else -9),
+                        ha='center', va='bottom' if above else 'top', fontsize=12)
         ax.axhline(gt, color='k', ls='--', lw=2, label=f'truth $\\gamma$={gt}')
         ax.set_xticks(range(4))
-        ax.set_xlim(-0.5, 3.5); ax.set_ylabel(r'recovered $\gamma$')
-        ax.legend(fontsize=12, loc='best'); ax.grid(alpha=0.3)
-        # panel identity as in-axes text, not a title (titles were removed paper-wide)
-        ax.text(0.02, 0.94, f'$\\gamma_{{\\rm true}}={gt}$', transform=ax.transAxes,
+        ax.set_xlim(-0.6, 3.6); ax.set_ylabel(r'Recovered $\gamma$')
+        ax.margins(y=0.30)                 # room for the labels at both extremes
+        ax.grid(alpha=0.3)
+        # Panel identity in-axes (titles were removed paper-wide). The truth-line legend is
+        # shared below the figure: in-axes it covered the leftmost point.
+        ax.text(0.02, 0.95, f'$\\gamma_{{\\rm true}}={gt}$', transform=ax.transAxes,
                 va='top', ha='left', fontsize=12,
-                bbox=dict(boxstyle='round', fc='white', ec='0.7', alpha=0.85))
+                bbox=dict(boxstyle='round', fc='white', ec='0.7', alpha=0.9))
     axes[-1, 0].set_xticklabels(labels, fontsize=12)     # x labels on the bottom panel only
+    for _ax in axes.ravel():          # legend ABOVE each panel: in-axes it covered points
+        _ax.legend(fontsize=12, loc='lower center', bbox_to_anchor=(0.5, 1.01),
+                   ncol=2, framealpha=0.9)
     fig.tight_layout(); fig.savefig(out, dpi=150, bbox_inches='tight'); plt.close(fig)
     print(f"\n--> Saved {out}")
     return results
@@ -3960,7 +4038,7 @@ def run_shrinkage_test(gamma_true=(0.4, 1.0), nsteps_grid=(400, 1600, 6400), n_r
         rather than by a referee.
 
       NON-CONVERGENCE -- _gnfw_gamma_posterior() runs only 16 walkers x 400 steps (it is called
-        in a 40-realisation loop, so it is deliberately short). The walkers start at gamma = 0.7.
+        in a 40-realization loop, so it is deliberately short). The walkers start at gamma = 0.7.
         If 400 steps is simply too few, the bias is an artifact of the gate machinery only, and
         run_dm5_chain() at 24 walkers x 4000 steps is unaffected.
 
@@ -4033,11 +4111,21 @@ def run_shrinkage_test(gamma_true=(0.4, 1.0), nsteps_grid=(400, 1600, 6400), n_r
         ax.axhline(0, color='k', ls='--', lw=2, label='unbiased')
         ax.axhline(prior_med - gt, color='crimson', ls=':', lw=1.6,
                    label=f'full shrinkage to prior median ({prior_med:.2f})')
-        ax.set_xscale('log'); ax.set_ylabel(r'bias in recovered $\gamma$')
-        ax.legend(fontsize=12, loc='best'); ax.grid(alpha=0.3)
-        ax.text(0.02, 0.94, f'$\\gamma_{{\\rm true}}={gt}$', transform=ax.transAxes,
-                va='top', ha='left', fontsize=12,
-                bbox=dict(boxstyle='round', fc='white', ec='0.7', alpha=0.85))
+        ax.set_xscale('log'); ax.set_ylabel(r'Bias in recovered $\gamma$')
+        ax.grid(alpha=0.3)
+        # Only the sampled step counts are labelled. Log minor ticks would otherwise print
+        # 3x10^3 and 4x10^3 close enough together that the exponents collide.
+        ax.set_xticks(list(nsteps_grid))
+        ax.set_xticklabels([str(n) for n in nsteps_grid])
+        ax.set_xticks([], minor=True)
+        ax.margins(y=0.28)                              # headroom for the label below
+        # Top-RIGHT: the leftmost data point sits at the smallest step count, so a
+        # top-left badge covered it.
+        ax.text(0.02, 0.05, f'$\\gamma_{{\\rm true}}={gt}$', transform=ax.transAxes,
+                va='bottom', ha='left', fontsize=12,
+                bbox=dict(boxstyle='round', fc='white', ec='0.7', alpha=0.9))
+        ax.legend(fontsize=12, loc='lower center', bbox_to_anchor=(0.5, 1.01),
+                  ncol=2, framealpha=0.9)
     axes[-1, 0].set_xlabel('MCMC steps')                # x label on the bottom panel only
     fig.tight_layout(); fig.savefig(out, dpi=150, bbox_inches='tight'); plt.close(fig)
     print(f"\n--> Saved {out}")
@@ -4046,12 +4134,12 @@ def run_shrinkage_test(gamma_true=(0.4, 1.0), nsteps_grid=(400, 1600, 6400), n_r
 
 def run_bias_vs_realizations(gamma_true=1.0, max_real=40, out="figure_bias_vs_realizations.png"):
     """
-    Mean recovered-gamma bias as a function of the number of mock realisations, for the
+    Mean recovered-gamma bias as a function of the number of mock realizations, for the
     discrete two-population split vs the continuous (all-star) treatment, with a 25th-75th
-    percentile band (the running spread of individual-realisation biases). Shows that the
+    percentile band (the running spread of individual-realization biases). Shows that the
     discrete bias is stable and non-zero while the continuous bias converges toward zero.
     Uses posterior medians (same estimator as run_bias_gate). Writes the figure and returns
-    the per-realisation arrays.
+    the per-realization arrays.
     """
     import matplotlib
     try: matplotlib.use("Agg")
@@ -4073,7 +4161,7 @@ def run_bias_vs_realizations(gamma_true=1.0, max_real=40, out="figure_bias_vs_re
         a = float(np.median(R)); rc, so, se = _binprof(R, vlos)
         gc.append(_gnfw_gamma_posterior([(a, rc, so, se)], seed=s + 991))
         if (s + 1) % 5 == 0:
-            print(f"    {s+1}/{max_real} realisations done")
+            print(f"    {s+1}/{max_real} realizations done")
     gd, gc = np.array(gd), np.array(gc)
 
     ns = np.arange(2, max_real + 1)
@@ -4086,13 +4174,13 @@ def run_bias_vs_realizations(gamma_true=1.0, max_real=40, out="figure_bias_vs_re
         ax.plot(ns, run_mean, '-', color=color, lw=2, label=f'{name}: bias -> {run_mean[-1]:+.2f}')
         ax.fill_between(ns, run_lo, run_hi, color=color, alpha=0.18)
     ax.axhline(0.0, color='k', ls='--', lw=1.5, label='unbiased (truth)')
-    ax.set_xlabel('number of mock realisations')
-    ax.set_ylabel(r'mean recovered-$\gamma$ bias  ($\langle\gamma\rangle-\gamma_{\rm true}$)')
+    ax.set_xlabel('Number of mock realizations')
+    ax.set_ylabel(r'Mean recovered-$\gamma$ bias  ($\langle\gamma\rangle-\gamma_{\rm true}$)')
     ax.legend(fontsize=12); ax.grid(alpha=0.3)
     fig.tight_layout(); fig.savefig(out, dpi=150, bbox_inches='tight'); plt.close(fig)
     print(f"\n--> Saved {out}")
     print(f"  final: discrete bias = {np.mean(gd)-gamma_true:+.3f}, "
-          f"continuous bias = {np.mean(gc)-gamma_true:+.3f}  ({max_real} realisations)")
+          f"continuous bias = {np.mean(gc)-gamma_true:+.3f}  ({max_real} realizations)")
     return dict(gd=gd, gc=gc)
 
 
@@ -4155,39 +4243,44 @@ def make_data_overview(catalog=None, feh_quality_keep=None,
     a.hist(vlos[mp], b, color=cMP, alpha=0.6, label='metal-poor')
     a.hist(vlos[mr], b, color=cMR, alpha=0.6, label='metal-rich')
     a.axvline(0, color='k', ls='--', lw=1, label='systemic')
-    a.set_xlabel(r'$v_{\rm los}$ (rest frame)  [km s$^{-1}$]'); a.set_ylabel('N stars')
+    a.set_xlabel(r'$v_{\rm los}$ (rest frame)  [km s$^{-1}$]'); a.set_ylabel('$N$ stars')
     a.set_title(f'Line-of-sight velocity  (N = {len(vlos)})'); a.legend(fontsize=12)
 
     # (2) metallicity histogram + unimodality statistics (evidence #1)
     a = ax[0, 1]
     b = np.linspace(np.percentile(feh, 0.5), np.percentile(feh, 99.5), 35)
     a.hist(feh[mp], b, color=cMP, alpha=0.6); a.hist(feh[mr], b, color=cMR, alpha=0.6)
-    a.axvline(med, color='k', ls=':', lw=1.2, label=f'median split = {med:.2f}')
+    a.axvline(med, color='k', ls=':', lw=1.2)   # value reported in the stats box below
     try:
         bc, dbic = _unimodality_report(feh)
         dip, dp = _dip_test(feh)
-        txt = (f'BC = {bc:.2f} ({"uni" if bc < 0.555 else "bi"}modal)\n'
+        txt = (f'median split = {med:.2f}\n'
+               f'BC = {bc:.2f} ({"uni" if bc < 0.555 else "bi"}modal)\n'
                f'$\\Delta$BIC$_{{1-2}}$ = {dbic:+.0f}')
         if dip is not None:
             txt += f'\ndip $p$ = {dp:.2f} ({"unimodal" if dp > 0.05 else "multimodal"})'
-        a.text(0.03, 0.97, txt, transform=a.transAxes, va='top', ha='left', fontsize=12,
-               bbox=dict(boxstyle='round', fc='white', ec='0.7', alpha=0.85))
+        a.margins(y=0.42)          # headroom: the box otherwise sits on the tallest bar
+        a.text(0.97, 0.97, txt, transform=a.transAxes, va='top', ha='right', fontsize=12,
+               bbox=dict(boxstyle='round', fc='white', ec='0.7', alpha=0.9))
     except Exception:
         pass
-    a.set_xlabel(mlabel + munit); a.set_ylabel('N stars')
-    a.set_title('Metallicity distribution'); a.legend(fontsize=12)
+    a.set_xlabel(mlabel + munit); a.set_ylabel('$N$ stars')
+    # No legend here. The only entry was the median-split line, and both it and the
+    # unimodality stats box are wide enough that left/right pinning still overlapped;
+    # the median is now the first line of that box instead.
+    a.set_title('Metallicity distribution')
 
     # (3) projected-radius histogram
     a = ax[0, 2]
     a.hist(R, 35, color='0.5', alpha=0.85, edgecolor='w', linewidth=0.3)
-    a.set_xlabel('elliptical radius $R$  [kpc]'); a.set_ylabel('N stars')
+    a.set_xlabel(r'Elliptical radius $R$ (kpc)'); a.set_ylabel('$N$ stars')
     a.set_title('Projected radial distribution')
 
-    # (4) on-sky map, coloured by [Fe/H]
+    # (4) on-sky map, colored by [Fe/H]
     a = ax[1, 0]
     sc = a.scatter(dx, dy, c=feh, s=9, cmap='coolwarm_r',
                    vmin=np.percentile(feh, 2), vmax=np.percentile(feh, 98))
-    a.set_xlabel(r'$\Delta$RA  [kpc]'); a.set_ylabel(r'$\Delta$Dec  [kpc]')
+    a.set_xlabel(r'$\Delta$RA (kpc)'); a.set_ylabel(r'$\Delta$Dec (kpc)')
     a.set_aspect('equal'); a.invert_xaxis(); a.set_title('On-sky distribution')
     plt.colorbar(sc, ax=a, label=mlabel, fraction=0.046)
 
@@ -4196,15 +4289,15 @@ def make_data_overview(catalog=None, feh_quality_keep=None,
     a.scatter(R[mp], vlos[mp], s=9, color=cMP, alpha=0.5, label='metal-poor')
     a.scatter(R[mr], vlos[mr], s=9, color=cMR, alpha=0.5, label='metal-rich')
     a.axhline(0, color='k', ls='--', lw=1)
-    a.set_xlabel('$R$  [kpc]'); a.set_ylabel(r'$v_{\rm los}$  [km s$^{-1}$]')
-    a.set_title('Kinematics: velocity vs radius'); a.legend(fontsize=12)
+    a.set_xlabel(r'Projected radius $R$ (kpc)'); a.set_ylabel(r'$v_{\rm los}$ (km s$^{-1}$)')
+    a.set_title('Kinematics: velocity versus radius'); a.legend(fontsize=12)
 
-    # (6) chemodynamics: velocity vs metallicity, coloured by radius
+    # (6) chemodynamics: velocity vs metallicity, colored by radius
     a = ax[1, 2]
     sc = a.scatter(feh, vlos, c=R, s=9, cmap='viridis')
     a.axhline(0, color='k', ls='--', lw=1)
-    a.set_xlabel(mlabel + munit); a.set_ylabel(r'$v_{\rm los}$  [km s$^{-1}$]')
-    a.set_title('Chemodynamics: velocity vs metallicity')
+    a.set_xlabel(mlabel + munit); a.set_ylabel(r'$v_{\rm los}$ (km s$^{-1}$)')
+    a.set_title('Chemodynamics: velocity versus metallicity')
     plt.colorbar(sc, ax=a, label='$R$ [kpc]', fraction=0.046)
 
     fig.tight_layout(); fig.savefig(out, dpi=140, bbox_inches='tight'); plt.close(fig)
@@ -4263,8 +4356,8 @@ def make_dispersion_profile(out=None, nbins=8, use_gaia=False):
         except Exception as exc:
             print(f"  PM dispersion skipped ({str(exc)[:70]})")
 
-    ax.set_xlabel(r'projected radius $R$  [kpc]')
-    ax.set_ylabel(r'velocity dispersion  [km s$^{-1}$]')
+    ax.set_xlabel(r'Projected radius $R$ (kpc)')
+    ax.set_ylabel(r'Velocity dispersion $\sigma$ (km s$^{-1}$)')
     ax.grid(alpha=0.3); ax.legend(fontsize=12)
     fig.tight_layout(); fig.savefig(out, dpi=150, bbox_inches='tight'); plt.close(fig)
     print(f"--> Saved {out}  ({len(Rc)} radial bins)")
@@ -4384,7 +4477,7 @@ def make_gaia_skymap(out=None, cuts=(100, 90, 50, 25), arrays=None):
     """
     Gaia proper-motion sky map with one panel per PM-offset percentile cut (the advisor's
     membership-cut justification): each panel keeps the N% of stars closest to the galaxy's
-    systemic PM, coloured by that same offset magnitude |Delta mu|. Demonstrates whether
+    systemic PM, colored by that same offset magnitude |Delta mu|. Demonstrates whether
     tightening the PM criterion changes the retained sample's spatial distribution.
 
     Cuts on |Delta mu| percentile directly, NOT the 2-component GMM's P_mem_PM: on this
@@ -4437,7 +4530,7 @@ def make_gaia_skymap(out=None, cuts=(100, 90, 50, 25), arrays=None):
                   label=r'excluded (largest $|\Delta\mu|$)')
         sc = ax.scatter(dRA[mem], dDec[mem], s=14, c=dmu[mem], cmap='magma_r', vmin=0, vmax=vmax,
                         edgecolors='k', linewidths=0.2, label='retained')
-        ax.set_xlabel(r'$\Delta$RA [deg]'); ax.set_ylabel(r'$\Delta$Dec [deg]')
+        ax.set_xlabel(r'$\Delta$RA (deg)'); ax.set_ylabel(r'$\Delta$Dec (deg)')
         ax.text(0.03, 0.96, f'tightest {pct}%   ({int(mem.sum())} stars)',
                 transform=ax.transAxes, va='top', ha='left', fontsize=12,
                 bbox=dict(boxstyle='round', fc='white', ec='0.7', alpha=0.85))
@@ -4492,7 +4585,7 @@ def make_action_space(out=None, chain_file="cont_chain.npy", arrays=None):
     """
     Action-space chemodynamics: (left) metallicity vs radial action J_r, testing whether
     metal-rich stars occupy lower-action (more bound, centrally concentrated) orbits -- the
-    action-space signature of the gradient; (right) J_z vs J_r scatter coloured by [Fe/H], to
+    action-space signature of the gradient; (right) J_z vs J_r scatter colored by [Fe/H], to
     reveal any trend across orbit type. Needs Gaia PMs + AGAMA actions in the fitted potential
     (or pass arrays=dict(Jr,Jz,Jphi,feh) for offline testing). Writes figure_action_space.png.
     """
@@ -4518,17 +4611,17 @@ def make_action_space(out=None, chain_file="cont_chain.npy", arrays=None):
         axL.plot(jm, fm, 'r-o', lw=2, label='running median')
         axL.legend(fontsize=12)
     axL.set_xscale('log')
-    axL.set_xlabel(r'radial action $J_r$  [kpc km s$^{-1}$]')
+    axL.set_xlabel(r'Radial action $J_r$ (kpc km s$^{-1}$)')
     axL.set_ylabel(r'[Fe/H]')
     # in-axes labels rather than set_title (titles are carried by the LaTeX caption)
-    axL.text(0.03, 0.05, 'metallicity vs radial action', transform=axL.transAxes,
+    axL.text(0.03, 0.05, 'Metallicity versus radial action', transform=axL.transAxes,
              va='bottom', ha='left', fontsize=12,
              bbox=dict(boxstyle='round', fc='white', ec='0.7', alpha=0.85))
     axL.grid(alpha=0.25)
 
     sc = axR.scatter(Jr, Jz, s=14, c=feh, cmap='viridis', alpha=0.8, edgecolors='k', linewidths=0.2)
     axR.set_xscale('log'); axR.set_yscale('log')
-    axR.set_xlabel(r'radial action $J_r$'); axR.set_ylabel(r'vertical action $J_z$')
+    axR.set_xlabel(r'Radial action $J_r$'); axR.set_ylabel(r'Vertical action $J_z$')
     axR.text(0.03, 0.05, 'action components', transform=axR.transAxes,
              va='bottom', ha='left', fontsize=12,
              bbox=dict(boxstyle='round', fc='white', ec='0.7', alpha=0.85))
@@ -4593,7 +4686,7 @@ def make_framework_comparison(out="figure_framework_comparison.png", chains=None
     axL.axvline(AP25['gamma'], color='0.25', ls='--', lw=1.5,
                 label=r'AP25 published: $0.39^{+0.23}_{-0.26}$')
     axL.axvline(1.0, color='k', ls=':', lw=1.0)
-    axL.text(1.0, 0.985, ' NFW cusp $\\gamma=1$', transform=axL.get_xaxis_transform(),
+    axL.text(1.0, 0.985, ' NFW cusp $\\gamma = 1$', transform=axL.get_xaxis_transform(),
              fontsize=12, va='top', color='k')
     for (lbl, g, c), (_, p50, lo, hi, _) in zip(loaded, meds):
         kde = gaussian_kde(g)
@@ -4603,7 +4696,7 @@ def make_framework_comparison(out="figure_framework_comparison.png", chains=None
                        f"$\\gamma={p50:.2f}^{{+{hi:.2f}}}_{{-{lo:.2f}}}$")
         axL.fill_between(gg, y, color=c, alpha=0.16)
     axL.set_xlim(0, 1.9); axL.set_ylim(bottom=0)
-    axL.set_xlabel(r'DM inner slope $\gamma$'); axL.set_ylabel('posterior density')
+    axL.set_xlabel(r'DM inner slope $\gamma$'); axL.set_ylabel('Posterior density')
     axL.set_title('Sculptor DM inner slope across the framework hierarchy')
     axL.legend(fontsize=12, loc='upper right'); axL.grid(alpha=0.25)
 
@@ -4954,7 +5047,8 @@ Order matches free_idx when fix_nuisance=True."""
 
 def run_continuous_chain(nwalkers=None, nsteps=2000, nproc=None, backend="cont.h5",
                          resume=None, nsub=None, use_mock=False, fix_nuisance=False,
-                         K=11, feh_quality_keep=None, catalog=None, init_mode='template'):
+                         fix_shape=False, K=11, feh_quality_keep=None, catalog=None,
+                         init_mode='template'):
     """
     Fit the continuous f(J,[Fe/H]) model (Phase 6) by MCMC. use_mock=True runs the recovery
     test (known gradient kJ and slope gamma); otherwise the real Tolstoy+2023 data.
@@ -4986,7 +5080,22 @@ def run_continuous_chain(nwalkers=None, nsteps=2000, nproc=None, backend="cont.h
 
     template = cont_truth_vector()                             # Sculptor-like seed / known truth
     nuis = [CONT_PARAM_NAMES.index(p) for p in ('V_C', 'sigV_C', 'M_C', 'sigM_C', 'f_C')]
-    free_idx = np.array([i for i in range(CONT_NDIM) if not (fix_nuisance and i in nuis)])
+    # fix_shape pins the halo shape parameters at the SAME values the Jeans and GravSphere
+    # fits hold fixed (alpha=1, eta=3). Two consequences, one scientific and one practical:
+    # the three methods then share a parameterisation, removing the caveat that they are not
+    # strictly comparable; and 13 sampled dims drop to 11, so the 4*ndim walker floor falls
+    # from 52 to 44. On a 22-core machine that is the difference between three sequential
+    # walker batches per step and two, i.e. a 1.5x throughput gain for free.
+    #
+    # This is a MODELLING CHANGE, not just a speed-up: the 13-parameter chain preferred
+    # alpha ~ 2.9 and eta ~ 2.2, so pinning them at 1 and 3 fits a different family and the
+    # recovered gamma and k_J may move. Report it as such.
+    shape = [CONT_PARAM_NAMES.index(p) for p in ('alpha', 'eta')]
+    if fix_shape:
+        template[CONT_PARAM_NAMES.index('alpha')] = 1.0
+        template[CONT_PARAM_NAMES.index('eta')] = 3.0
+    fixed = set((nuis if fix_nuisance else []) + (shape if fix_shape else []))
+    free_idx = np.array([i for i in range(CONT_NDIM) if i not in fixed])
     ndim = len(free_idx); nw = max(4 * ndim, nwalkers or 0)
     if nw < 4 * ndim:
         print(f"  WARNING: {nw} walkers for {ndim} parameters. The stretch move proposes along "
@@ -4995,8 +5104,9 @@ def run_continuous_chain(nwalkers=None, nsteps=2000, nproc=None, backend="cont.h
               f"mixing will be slow. Use at least {4*ndim}.")
     print(f"  fitting {ndim}/{CONT_NDIM} params"
           + (" (contamination fixed at fiducial)" if fix_nuisance else "")
+          + (" (alpha=1, eta=3 fixed, as in the Jeans/GravSphere fits)" if fix_shape else "")
           + f", K={K} metallicity nodes, {nw} walkers")
-    if fix_nuisance:
+    if fixed:
         data['_template'] = template.copy(); data['_free_idx'] = free_idx
         lnprob_fn = ap25_lnprob_continuous_reduced
     else:
@@ -5278,7 +5388,7 @@ def wp11_lnlike(theta, data):
         L_i = f_mem [f_sub p_1 + (1-f_sub) p_2] + (1 - f_mem) p_MW,i
 
     with p_MW estimated non-parametrically from the data (see _wp11_foreground_pdfs). The
-    selection function is taken as w(R)=1, so the Plummer radial pdf is already normalised;
+    selection function is taken as w(R)=1, so the Plummer radial pdf is already normalized;
     WP11 instead weight by their spectroscopic completeness, which is not recoverable from
     the published catalogue.
     """
@@ -5295,7 +5405,7 @@ def wp11_lnlike(theta, data):
     pR2 = 2.0 * R / rh2 ** 2 / (1.0 + R ** 2 / rh2 ** 2) ** 2
     w = data.get('w_star')
     if w is not None:
-        # With a non-uniform selection the Plummer pdf is no longer normalised over the
+        # With a non-uniform selection the Plummer pdf is no longer normalized over the
         # observed sample: each subcomponent term carries w(R_i) and is divided by
         # \int w(R) p_k(R) dR (WP11 Eq. 14), which depends on the fitted half-light radius.
         Rg, wg = data['R_grid'], data['w_grid']
@@ -5364,7 +5474,7 @@ def make_figure1_two_galaxy(galaxies=('sculptor', 'fornax'), out="figure1_two_ga
     """
     Figure-1 style data presentation for two dwarf spheroidals side by side (AP25 Fig.2 style):
     one row per galaxy, columns = (metallicity distribution, line-of-sight velocity vs projected
-    radius coloured by metallicity, velocity vs metallicity chemodynamics). Note the metallicity
+    radius colored by metallicity, velocity vs metallicity chemodynamics). Note the metallicity
     indicator differs by galaxy ([Fe/H] for Sculptor; Mg index for Fornax). Pass
     `arrays={galaxy: dict(R, vlos, feh, mlabel)}` for offline testing; otherwise loads each
     galaxy's real sample (needs VizieR). Writes figure1_two_galaxy.png.
@@ -5390,19 +5500,21 @@ def make_figure1_two_galaxy(galaxies=('sculptor', 'fornax'), out="figure1_two_ga
             ax = axes[i][0]
             ax.hist(feh, bins=30, color='steelblue', alpha=0.8, edgecolor='white', linewidth=0.4)
             ax.axvline(np.median(feh), color='k', ls=':', lw=1.3, label=f'median = {np.median(feh):.2f}')
-            ax.set_xlabel(mlabel); ax.set_ylabel('N stars'); ax.legend(fontsize=12)
+            ax.set_xlabel(mlabel); ax.set_ylabel('$N$ stars')
+            ax.margins(y=0.28)        # headroom so the legend clears the tallest bar
+            ax.legend(fontsize=12, loc='upper right', framealpha=0.9)
             ax.set_title(f'{gal_disp}: metallicity distribution')
             # col 1: velocity vs radius, colored by metallicity
             ax = axes[i][1]
             sc = ax.scatter(R, vlos, c=feh, s=12, cmap='viridis', alpha=0.75, edgecolors='none')
-            ax.axhline(0, color='k', ls='--', lw=1); ax.set_xlabel(r'projected radius $R$ [kpc]')
+            ax.axhline(0, color='k', ls='--', lw=1); ax.set_xlabel(r'Projected radius $R$ (kpc)')
             ax.set_ylabel(r'$v_{\rm los}$ (rest frame) [km s$^{-1}$]')
             ax.set_title(f'{gal_disp}: kinematics'); fig.colorbar(sc, ax=ax, fraction=0.046, pad=0.02, label=mlabel)
             # col 2: velocity vs metallicity chemodynamics
             ax = axes[i][2]
             ax.scatter(feh, vlos, c=R, s=12, cmap='plasma', alpha=0.75, edgecolors='none')
             ax.axhline(0, color='k', ls='--', lw=1); ax.set_xlabel(mlabel)
-            ax.set_ylabel(r'$v_{\rm los}$ [km s$^{-1}$]'); ax.set_title(f'{gal_disp}: chemodynamics')
+            ax.set_ylabel(r'$v_{\rm los}$ (km s$^{-1}$)'); ax.set_title(f'{gal_disp}: chemodynamics')
     finally:
         set_galaxy(saved)                                         # restore
 
@@ -5434,7 +5546,7 @@ def make_wp11_figure(flat, out="figure_wp11.png"):
     pts = np.vstack([lr, lM])
     try:
         dens = gaussian_kde(pts)(pts)
-        dens = dens / dens.max()                                    # normalise to Prob in (0,1]
+        dens = dens / dens.max()                                    # normalize to Prob in (0,1]
     except Exception:
         dens = np.ones_like(lr)
     order = np.argsort(dens)                                        # dense points drawn on top
@@ -5446,8 +5558,8 @@ def make_wp11_figure(flat, out="figure_wp11.png"):
     rr = np.array([np.median(d['rh1']) * 0.45, np.median(d['rh2']) * 1.7])
     axL.plot(rr, M0 * (rr / r0) ** 2, 'b:', lw=1.6)                 # slope 2 (cusp)
     axL.plot(rr, M0 * (rr / r0) ** 3, 'b--', lw=1.6)               # slope 3 (core)
-    axL.text(0.04, 0.96, r'slope=2 (cusp)', transform=axL.transAxes, fontsize=12, color='b', va='top')
-    axL.text(0.04, 0.90, r'slope=3 (core)', transform=axL.transAxes, fontsize=12, color='b', va='top')
+    axL.text(0.04, 0.96, r'slope = 2 (cusp)', transform=axL.transAxes, fontsize=12, color='b', va='top')
+    axL.text(0.04, 0.90, r'slope = 3 (core)', transform=axL.transAxes, fontsize=12, color='b', va='top')
     axL.set_xscale('log'); axL.set_yscale('log')
     xlo, xhi = GAL.get('wp11_xlim', (2.0, 2.75))                  # galaxy-aware panel range (log10)
     ylo, yhi = GAL.get('wp11_ylim', (6.3, 7.9))
@@ -5470,12 +5582,20 @@ def make_wp11_figure(flat, out="figure_wp11.png"):
     # right: posterior PDF of Gamma
     g16, g50, g84 = np.percentile(d['Gamma'], [16, 50, 84])
     s_excl = float(np.mean(d['Gamma'] > 2.0))                       # exclude NFW: P(Gamma>2)
-    axR.hist(d['Gamma'], 60, density=True, color='crimson', histtype='step', lw=2, label='Scl')
+    # Legend label follows the active galaxy: it was hard-coded to 'Scl' and so mislabelled
+    # the Fornax figure.
+    axR.hist(d['Gamma'], 60, density=True, color='crimson', histtype='step', lw=2,
+             label=GAL['name'])
     axR.axvline(2.0, color='k', ls=':', lw=1.5)
     axR.axvline(g50, color='crimson', lw=1.0, alpha=0.6)
-    axR.text(2.02, 0.96, r'NFW cusp', transform=axR.get_xaxis_transform(), fontsize=12, va='top')
+    # Inside the axes, rotated along the Gamma = 2 line. Vertical text needs almost no
+    # horizontal room, and both posteriors carry little density at Gamma = 2, so it clears
+    # the curve where a horizontal label at the top did not.
+    axR.margins(y=0.12)
+    axR.text(1.98, 0.97, r'NFW cusp', transform=axR.get_xaxis_transform(), fontsize=12,
+             va='top', ha='right', rotation=90)
     axR.set_xlabel(r'$\Gamma\equiv\Delta\log_{10}M/\Delta\log_{10}r$')
-    axR.set_ylabel('probability')
+    axR.set_ylabel('Probability')
     # In-axes annotation rather than set_title: on a two-panel figure the right panel's title
     # reads as a figure title, and titles are carried by the LaTeX caption throughout.
     axR.text(0.97, 0.97,
@@ -5587,11 +5707,17 @@ def run_membership_robustness(dmu_pcts=(100, 90, 75, 50, 25), nsteps=8000, nproc
                 capsize=4, lw=1.8, label=r'WP11 $\Gamma$ (68% CI)')
     ax.axhspan(np.min(glo), np.max(ghi), color='navy', alpha=0.08)
     ax.axhline(2.0, color='k', ls=':', lw=1.3, label=r'NFW cusp ($\Gamma=2$)')
-    for pct, n, g, _, _ in rows:
-        ax.annotate(f'N={n}', (pct, g), textcoords='offset points', xytext=(0, 10), fontsize=12, ha='center')
+    # Anchor the count above the TOP of the error bar rather than the marker: at the
+    # marker a 10pt offset lands inside the upper whisker and the digits get clipped.
+    for _i, (pct, n, g, _, hi) in enumerate(rows):
+        _ha = 'left' if _i == 0 else ('right' if _i == len(rows) - 1 else 'center')
+        _dx = -6 if _ha == 'left' else (6 if _ha == 'right' else 0)   # x axis is inverted
+        ax.annotate(f'$N$ = {n}', (pct, hi), textcoords='offset points', xytext=(_dx, 8),
+                    fontsize=12, ha=_ha)
     ax.invert_xaxis()          # tighter cuts (smaller %) to the right
-    ax.set_xlabel(xlabel); ax.set_ylabel(r'mass-profile slope $\Gamma$')
-    ax.legend(fontsize=12); ax.grid(alpha=0.3)
+    ax.set_xlabel(xlabel); ax.set_ylabel(r'Mass-profile slope $\Gamma$')
+    ax.margins(x=0.10, y=0.18)  # headroom, and room for the end N labels
+    ax.legend(fontsize=12, loc='lower left'); ax.grid(alpha=0.3)
     fig.tight_layout(); fig.savefig(out, dpi=150, bbox_inches='tight'); plt.close(fig)
     print(f"\n--> Saved {out}")
     spread = np.max(g50) - np.min(g50)
@@ -5661,13 +5787,16 @@ def run_pop3_robustness(feh_cuts=(None, -3.00, -2.75, -2.50), nsteps=8000, nproc
     ax.axhline(2.0, color='k', ls=':', lw=1.3, label=r'NFW cusp ($\Gamma=2$)')
     ax.axhline(g_base, color='darkgreen', ls='--', lw=1.0, alpha=0.6,
                label=r'$\Gamma$ (all stars)')
-    for x, r in zip(xs, rows):
-        ax.annotate(f'N={r[1]}', (x, r[3]), textcoords='offset points', xytext=(0, 11),
-                    fontsize=12, ha='center')
+    for _i, (x, r) in enumerate(zip(xs, rows)):
+        _ha = 'left' if _i == 0 else ('right' if _i == len(rows) - 1 else 'center')
+        _dx = 6 if _ha == 'left' else (-6 if _ha == 'right' else 0)
+        ax.annotate(f'$N$ = {r[1]}', (x, r[5]), textcoords='offset points', xytext=(_dx, 8),
+                    fontsize=12, ha=_ha)
     ax.set_xticks(xs); ax.set_xticklabels(labels)
-    ax.set_xlabel(r'very-metal-poor floor applied to the sample')
-    ax.set_ylabel(r'mass-profile slope $\Gamma$')
-    ax.legend(fontsize=12); ax.grid(alpha=0.3)
+    ax.set_xlabel(r'Very-metal-poor floor applied to the sample')
+    ax.set_ylabel(r'Mass-profile slope $\Gamma$')
+    ax.margins(x=0.10, y=0.18)
+    ax.legend(fontsize=12, loc='lower left'); ax.grid(alpha=0.3)
     fig.tight_layout(); fig.savefig(out, dpi=150, bbox_inches='tight'); plt.close(fig)
     print(f"\n--> Saved {out}")
     dmax = float(np.max(np.abs(g50 - g_base)))
@@ -5876,7 +6005,7 @@ if __name__ == "__main__":
                      help="two-galaxy Figure-1 data presentation (Sculptor + Fornax side by "
                           "side, AP25 Fig.2 style). figure1_two_galaxy.png.")
     _ap.add_argument("--actions", action="store_true",
-                     help="action-space chemodynamics: [Fe/H] vs J_r and J_z-J_r coloured by "
+                     help="action-space chemodynamics: [Fe/H] vs J_r and J_z-J_r colored by "
                           "[Fe/H] (needs Gaia PMs + a saved chain). figure_action_space.png.")
     _ap.add_argument("--dispersion", action="store_true",
                      help="radial velocity-dispersion profile sigma_los(R) (add --gaia to "
@@ -5911,7 +6040,7 @@ if __name__ == "__main__":
                           "sigma_los-only constraint on gamma is degenerate (core-to-cusp). "
                           "Writes figure_sliding_metallicity.png.")
     _ap.add_argument("--biasconv", action="store_true",
-                     help="Mean recovered-gamma bias vs the number of mock realisations "
+                     help="Mean recovered-gamma bias vs the number of mock realizations "
                           "(discrete vs continuous), with 25-75th percentile band. "
                           "Writes figure_bias_vs_realizations.png.")
     _ap.add_argument("--biasgate", action="store_true",
@@ -5986,6 +6115,19 @@ if __name__ == "__main__":
                           "separates that artifact from genuine decomposition bias. Affects "
                           "--biasgate, --revgate and --gatediag only; the real two-population "
                           "estimator fits the mixing fraction rather than splitting.")
+    _ap.add_argument("--ra", type=float, default=None, metavar="R_A",
+                     help="Osipkov-Merritt anisotropy radius for the spherical Jeans fit "
+                          "(default 1.5 kpc). Pass a large value (e.g. 1e6) for the isotropic "
+                          "limit, matching the assumption behind the sigma_los-only profile "
+                          "scan of --slide. Use a separate --backend: the stored chain is only "
+                          "valid for the r_a it was run at.")
+    _ap.add_argument("--fixshape", action="store_true",
+                     help="Hold the halo shape parameters at alpha=1, eta=3 in the continuous "
+                          "DF fit, matching what the Jeans and GravSphere fits already fix. "
+                          "Drops 13 sampled dims to 11, so the 4*ndim walker floor falls from "
+                          "52 to 44 and a 22-core machine runs two walker batches per step "
+                          "instead of three. Note this fits a different family: the "
+                          "13-parameter chain preferred alpha ~ 2.9, eta ~ 2.2.")
     _ap.add_argument("--goodmode", action="store_true",
                      help="Seed the continuous-DF walkers in the higher-likelihood mode "
                           "(CONT_GOOD_MODE) instead of the generic template. The posterior "
@@ -6056,7 +6198,8 @@ if __name__ == "__main__":
             _K = _args.K or (9 if _args.mock else 11)            # --K overrides the default node count
             run_continuous_chain(nsteps=_args.steps, nproc=(_args.nproc or None),
                                  backend=_bk, nsub=(_nsub or None), use_mock=_args.mock,
-                                 fix_nuisance=True, K=_K, nwalkers=(_args.walkers or None),
+                                 fix_nuisance=True, fix_shape=_args.fixshape,
+                                 K=_K, nwalkers=(_args.walkers or None),
                                  init_mode=('good' if _args.goodmode else 'template'),
                                  resume=(False if _args.no_resume else None))
         else:
@@ -6075,7 +6218,7 @@ if __name__ == "__main__":
         run_sliding_metallicity_test()
         sys.exit(0)
 
-    if _args.biasconv:                                # bias vs realisations plot, then exit
+    if _args.biasconv:                                # bias vs realizations plot, then exit
         run_bias_vs_realizations()
         sys.exit(0)
 
@@ -6130,6 +6273,13 @@ if __name__ == "__main__":
                              backend=_bk, resume=(False if _args.no_resume else None),
                              a_star=_args.astar)
         sys.exit(0)
+
+    if _args.ra is not None:               # must precede any chain construction
+        JEANS_RA = _args.ra
+        print(f"  [jeans] Osipkov-Merritt r_a set to {JEANS_RA:g} kpc")
+        # No --nproc restriction: r_a is passed through emcee's args tuple and is therefore
+        # pickled to each worker, so it survives the module re-import that spawn platforms
+        # perform.
 
     if _args.dm5:                                     # 5-parameter DM model (robust+fast), then exit
         _bk = _args.backend if _args.backend != "scl25.h5" else _gf("dm5.h5")
