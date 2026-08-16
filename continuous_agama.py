@@ -1143,7 +1143,7 @@ def agama_binned_pops(R, vlos, label, verr, nbins=6):
 JEANS_RA = 1.5
 
 
-def agama_lnprob_jeans(theta, pops, r_a=None):
+def agama_lnprob_jeans(theta, pops, r_a=None, gamma_prior=None):
     """Flat priors x Gaussian likelihood on binned sigma_los(R), for a gNFW DM profile.
     theta = (gamma, log10 r_s, log10 M_DM); the transition/outer slopes are FIXED to
     gNFW (alpha=1, eta=3) and the anisotropy to r_a=1.5. This is deliberate: the ~12
@@ -1155,7 +1155,12 @@ def agama_lnprob_jeans(theta, pops, r_a=None):
     # processes on spawn platforms (Windows, macOS) re-import this module and would reset
     # the global to its default, silently fitting r_a = 1.5 no matter what was requested.
     r_a = JEANS_RA if r_a is None else r_a
-    if not (JEANS_GAMMA_PRIOR[0] <= gamma <= JEANS_GAMMA_PRIOR[1]
+    # Same reason as r_a: --gammaprior rebinds a module global in the PARENT only, so on
+    # spawn platforms the workers would enforce the default bounds while the walkers were
+    # initialised inside the narrower ones. Latent so far only because the posterior falls
+    # off well inside 1.5, but it would silently void a tighter prior.
+    gamma_prior = JEANS_GAMMA_PRIOR if gamma_prior is None else gamma_prior
+    if not (gamma_prior[0] <= gamma <= gamma_prior[1]
             and -3.0 <= log_rs <= 1.0 and 7.0 <= log_MDM <= 11.0):
         return -np.inf
     try:
@@ -1263,7 +1268,8 @@ def run_dm5_chain(nwalkers=24, nsteps=4000, nproc=None, backend="dm5.h5", resume
     resume_ok = bool(resume and bk is not None and os.path.exists(backend) and bk.iteration > 0)
     pool = _make_pool(nproc)
     try:
-        s = emcee.EnsembleSampler(nw, ndim, agama_lnprob_jeans, args=(pops, JEANS_RA),
+        s = emcee.EnsembleSampler(nw, ndim, agama_lnprob_jeans,
+                                  args=(pops, JEANS_RA, JEANS_GAMMA_PRIOR),
                                   moves=moves, pool=pool, backend=bk)
         if resume_ok:
             print(f"    [MCMC] resuming from {bk.iteration} stored steps.")
