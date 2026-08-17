@@ -6124,6 +6124,11 @@ if __name__ == "__main__":
                           "limit, matching the assumption behind the sigma_los-only profile "
                           "scan of --slide. Use a separate --backend: the stored chain is only "
                           "valid for the r_a it was run at.")
+    _ap.add_argument("--nreal", type=int, default=None, metavar="N",
+                     help="Realisations per mock configuration for --biasgate, --revgate and "
+                          "--gatediag (default 40). The run-to-run scatter on the derived "
+                          "geometry/chemistry split is set by this number, so raising it to "
+                          "~200 stabilises the third digit at ~5x the runtime.")
     _ap.add_argument("--fixshape", action="store_true",
                      help="Hold the halo shape parameters at alpha=1, eta=3 in the continuous "
                           "DF fit, matching what the Jeans and GravSphere fits already fix. "
@@ -6225,16 +6230,18 @@ if __name__ == "__main__":
         run_bias_vs_realizations()
         sys.exit(0)
 
+    _nr = dict(n_real=_args.nreal) if _args.nreal else {}
+
     if _args.biasgate:                                # bias gate on mocks, then exit
-        run_bias_gate(split_frac=_args.splitfrac)
+        run_bias_gate(split_frac=_args.splitfrac, **_nr)
         sys.exit(0)
 
     if _args.revgate:                                 # reverse bias gate on mocks, then exit
-        run_reverse_bias_gate(split_frac=_args.splitfrac)
+        run_reverse_bias_gate(split_frac=_args.splitfrac, **_nr)
         sys.exit(0)
 
     if _args.gatediag:                                # gate control tests on mocks, then exit
-        run_gate_diagnostics(split_frac=_args.splitfrac)
+        run_gate_diagnostics(split_frac=_args.splitfrac, **_nr)
         sys.exit(0)
 
     if _args.shrinkage:                               # prior-vs-convergence test, then exit
