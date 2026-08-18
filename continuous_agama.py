@@ -31,14 +31,20 @@ analysis. Five phases:
   5  The full faithful 25-parameter AP25 model (--chain) with an AP24-style selection
      function -- a cluster-scale run.
 
+Phases 1-3 predate the submitted analysis and are retained so that earlier diagnostics
+stay reproducible; the paper's results come from Phase 4 and 4b and from the
+mock-validation and robustness suites. Phase 5 (--chain) is a 25-parameter reproduction
+of the Arroyo-Polonio et al. (2025) model, not used in the paper, which cites their
+published value instead. See --help for the full flag list.
+
 Command line:
-  python sculptor_agama_project.py               # fast phases 1-4 + Phase-5 smoke test
-  python sculptor_agama_project.py --dm5         # spherical-Jeans gNFW inner slope (real data)
-  python sculptor_agama_project.py --gravsphere  # GravSphere: Jeans + VSPs, free beta(r)
-  python sculptor_agama_project.py --chain       # full 25-parameter chain (cluster-scale)
-  python sculptor_agama_project.py --overview    # data-overview figure (histograms/scatter)
-  python sculptor_agama_project.py --compare     # gamma across all frameworks, one figure
-  python sculptor_agama_project.py --help        # all options
+  python continuous_agama.py               # fast phases 1-4 + Phase-5 smoke test
+  python continuous_agama.py --dm5         # spherical-Jeans gNFW inner slope (real data)
+  python continuous_agama.py --gravsphere  # GravSphere: Jeans + VSPs, free beta(r)
+  python continuous_agama.py --chain       # full 25-parameter chain (cluster-scale)
+  python continuous_agama.py --overview    # data-overview figure (histograms/scatter)
+  python continuous_agama.py --compare     # gamma across all frameworks, one figure
+  python continuous_agama.py --help        # all options
 """
 
 import os
@@ -61,6 +67,23 @@ from scipy.optimize import minimize
 from scipy.stats import multivariate_normal
 
 from astroquery.vizier import Vizier
+# VizieR mirrors are not always in sync: a mirror that has not yet indexed a catalogue
+# returns an EMPTY TableList rather than raising, so a failed query looks like a catalogue
+# with no tables. Set VIZIER_SERVER to query a specific mirror, e.g.
+#   set VIZIER_SERVER=vizier.cfa.harvard.edu        (Windows)
+#   export VIZIER_SERVER=vizier.cfa.harvard.edu     (POSIX)
+# Other mirrors: vizier.hia.nrc.ca, vizier.nao.ac.jp. Leave unset for the default
+# (Strasbourg). Every result in the paper is reproducible from any mirror carrying the
+# two catalogues; the row counts printed by the loaders confirm an identical sample.
+if os.environ.get("VIZIER_SERVER"):
+    Vizier.VIZIER_SERVER = os.environ["VIZIER_SERVER"]
+    # Only the parent announces the mirror: under Windows's spawn start method every
+    # worker re-imports this module, so an unguarded print repeats once per process.
+    # multiprocessing is imported locally here because the module-level `import
+    # multiprocessing as mp` comes later in the file.
+    import multiprocessing as _mp
+    if _mp.current_process().name == "MainProcess":
+        print(f"  [vizier] using mirror {Vizier.VIZIER_SERVER}")
 from astroquery.gaia import Gaia
 from astropy.coordinates import SkyCoord
 from astropy.time import Time
@@ -382,8 +405,9 @@ def fetch_walker_data():
     the older Gaia-membership demonstration path; the flag-based commands use the galaxy-aware
     _fetch_tolstoy2023 loader instead. Returns a DataFrame of the catalog rows."""
     print("\n[Phase 1] Fetching Walker et al. (2009) from VizieR...")
-    Vizier.ROW_LIMIT = -1
-    walker = Vizier.get_catalogs("J/AJ/137/3100")[0]
+    _vz = _vizier_server(Vizier())
+    _vz.ROW_LIMIT = -1
+    walker = _vz.get_catalogs("J/AJ/137/3100")[0]
 
     df = pd.DataFrame({
         "Target":    np.array(walker["Target"]).astype(str),
@@ -2508,7 +2532,7 @@ def ap25_inspect_vizier(catalog="J/A+A/675/A49"):
     discover the real velocity/[Fe/H]/coord column names, then pass them to the
     loader via cols=dict(vlos=..., feh=..., ra=..., dec=..., verr=..., feherr=...)."""
     from astroquery.vizier import Vizier
-    v = Vizier(columns=["**"]); v.ROW_LIMIT = 3
+    v = _vizier_server(Vizier(columns=["**"])); v.ROW_LIMIT = 3
     cats = v.get_catalogs(catalog)
     print(f"VizieR catalog {catalog}: {len(cats)} table(s)")
     for i, t in enumerate(cats):
@@ -2536,7 +2560,7 @@ def _fetch_mmfs_averaged(catalog="J/AJ/137/3100", galaxy_prefixes=('for', 'fnx')
     _fetch_tolstoy2023 so it can be used interchangeably.
     """
     from astroquery.vizier import Vizier
-    v = Vizier(columns=["**"]); v.ROW_LIMIT = -1
+    v = _vizier_server(Vizier(columns=["**"])); v.ROW_LIMIT = -1
     cats = {t.meta.get('name'): t for t in v.get_catalogs(catalog)}
     star_tab = next((t for n, t in cats.items() if n.endswith('/stars')), None)
     exp_tab = next((t for n, t in cats.items() if n.endswith('/tables')), None)
@@ -2619,7 +2643,7 @@ def _fetch_tolstoy2023(catalog="J/A+A/675/A49", cols=None,
     On failure it prints every table's columns and raises a diagnostic KeyError."""
     from astroquery.vizier import Vizier
     cols = cols or {}
-    v = Vizier(columns=["**"]); v.ROW_LIMIT = -1
+    v = _vizier_server(Vizier(columns=["**"])); v.ROW_LIMIT = -1
     cats = v.get_catalogs(catalog)
 
     def find(table, cands):
@@ -2696,11 +2720,34 @@ def _fetch_tolstoy2023(catalog="J/A+A/675/A49", cols=None,
             return (gcoord(rc, True)[sel], gcoord(dc, False)[sel], g(vc)[sel], verr[sel],
                     g(fc)[sel], feherr[sel], gmag[sel])
 
+    if len(cats) == 0:
+        raise KeyError(
+            f"VizieR returned NO tables for '{catalog}'.\n"
+            "This is a mirror problem, not a column-detection problem: an out-of-sync "
+            "VizieR mirror answers with an empty result instead of an error.\n"
+            "Try another mirror, e.g.\n"
+            "  set VIZIER_SERVER=vizier.cfa.harvard.edu     (Windows)\n"
+            "  export VIZIER_SERVER=vizier.cfa.harvard.edu  (POSIX)\n"
+            "Other mirrors: vizier.hia.nrc.ca, vizier.nao.ac.jp.")
     lines = [f"Could not auto-detect velocity+[Fe/H] columns in '{catalog}'.",
              "Run ap25_inspect_vizier(catalog), then pass cols=dict(...). Tables found:"]
     for i, t in enumerate(cats):
         lines.append(f"  [{i}] {t.meta.get('name', '?')}: {list(t.colnames)}")
     raise KeyError("\n".join(lines))
+
+
+def _vizier_server(v):
+    """Apply the VIZIER_SERVER override to a Vizier INSTANCE.
+
+    astroquery instances capture the server at construction, so setting the class
+    attribute after import has no effect on them -- the query then silently hits the
+    default mirror and, if that mirror is out of sync, returns an empty TableList
+    instead of raising. Every instance in this file is routed through here.
+    """
+    _srv = os.environ.get("VIZIER_SERVER")
+    if _srv:
+        v.VIZIER_SERVER = _srv
+    return v
 
 
 def _semi_major_axis_radius(ra, dec, D_KPC=None):
@@ -2802,7 +2849,7 @@ def wp11_photometric_parent(radius_deg=0.6, g_range=(17.0, 20.5), bp_rp_range=No
         filt = {'Gmag': f'{g_range[0]}..{g_range[1]}'}
         if bp_rp_range:
             filt['BP-RP'] = f'{bp_rp_range[0]}..{bp_rp_range[1]}'
-        V = Vizier(columns=cols, column_filters=filt, row_limit=-1)
+        V = _vizier_server(Vizier(columns=cols, column_filters=filt, row_limit=-1))
         centre = SkyCoord(RA0_DEG, DEC0_DEG, unit='deg')
         res = V.query_region(centre, radius=radius_deg * u.deg, catalog='I/355/gaiadr3')
         if not len(res):
@@ -4208,12 +4255,13 @@ def make_data_overview(catalog=None, feh_quality_keep=None,
         _cat = catalog or GAL['catalog']
         _fqk = GAL['feh_quality_keep'] if feh_quality_keep is None else feh_quality_keep
         if GAL.get('mmfs_average'):      # rebuild from per-exposure rows; see _load_real_feh
-            ra, dec, vlos, verr, feh, feherr, _m = _fetch_mmfs_averaged(
+            ra, dec, vlos, verr, feh, feherr, memb = _fetch_mmfs_averaged(
                 _cat, galaxy_prefixes=GAL.get('target_keep', ()),
                 index_col=str(GAL['cols']['feh']).strip('<>'),
                 mem_min=(None if GAL.get('wp11_foreground') else GAL.get('mem_min')))
             gmag = np.full(len(ra), np.nan)
         else:
+            memb = None
             ra, dec, vlos, verr, feh, feherr, gmag = _fetch_tolstoy2023(
                 _cat, GAL.get('cols'), mem_keep=(GAL.get('mem_keep') or ('m',)),
                 require_member=bool(GAL.get('mem_keep')),
@@ -4222,8 +4270,11 @@ def make_data_overview(catalog=None, feh_quality_keep=None,
         good = np.isfinite(vlos) & np.isfinite(feh)
         ra, dec = ra[good], dec[good]
         vlos, feh = vlos[good] - V_SYS, feh[good]     # rest-frame velocity
+        if memb is not None:
+            memb = np.asarray(memb)[good]
         R = _semi_major_axis_radius(ra, dec)
     else:
+        memb = None
         ra, dec = arrays['ra'], arrays['dec']
         vlos, feh, R = arrays['vlos_rest'], arrays['feh'], arrays['R']
 
@@ -4255,13 +4306,18 @@ def make_data_overview(catalog=None, feh_quality_keep=None,
     a.hist(feh[mp], b, color=cMP, alpha=0.6); a.hist(feh[mr], b, color=cMR, alpha=0.6)
     a.axvline(med, color='k', ls=':', lw=1.2)   # value reported in the stats box below
     try:
-        bc, dbic = _unimodality_report(feh)
-        dip, dp = _dip_test(feh)
+        # Unimodality is a statement about the member MDF, so the statistics are
+        # computed on members only even when the panels show the full sample with
+        # non-members retained for the foreground model (Fornax).
+        _sel = ((np.isfinite(memb) & (memb >= 0.5)) if memb is not None
+                else np.ones(len(feh), dtype=bool))
+        bc, dbic = _unimodality_report(feh[_sel])
+        dip, dp = _dip_test(feh[_sel])
         txt = (f'median split = {med:.2f}\n'
                f'BC = {bc:.2f} ({"uni" if bc < 0.555 else "bi"}modal)\n'
-               f'$\\Delta$BIC$_{{1-2}}$ = {dbic:+.0f}')
+               f'$\\Delta$BIC$_{{1-2}}$ = {dbic:+.1f}  ($N$ = {int(_sel.sum())})')
         if dip is not None:
-            txt += f'\ndip $p$ = {dp:.2f} ({"unimodal" if dp > 0.05 else "multimodal"})'
+            txt += f'\ndip $p$ = {dp:.3f} ({"unimodal" if dp > 0.05 else "multimodal"})'
         a.margins(y=0.42)          # headroom: the box otherwise sits on the tallest bar
         a.text(0.97, 0.97, txt, transform=a.transAxes, va='top', ha='right', fontsize=12,
                bbox=dict(boxstyle='round', fc='white', ec='0.7', alpha=0.9))
@@ -5270,7 +5326,7 @@ def _wp11_foreground_pdfs(R, V, Z, eV, eZ, p_mem, k_spatial):
     return pR * pV * pZ
 
 
-def wp11_load_data(catalog=None, feh_quality_keep=None):
+def wp11_load_data(catalog=None, feh_quality_keep=None, vclip_sigma=None):
     """Active galaxy's stars: projected (elliptical) radius in pc, rest-frame velocity,
     metallicity indicator ([Fe/H] for Sculptor; Mg index W' for Fornax), and their
     measurement errors.
@@ -5298,6 +5354,18 @@ def wp11_load_data(catalog=None, feh_quality_keep=None):
             mem_min=GAL.get('mem_min'),
             feh_quality_keep=(list(fqk) if fqk else None))
     good = np.isfinite(vlos) & np.isfinite(feh) & np.isfinite(verr) & np.isfinite(feherr)
+    if vclip_sigma:
+        # The same robust MAD clip the Jeans/GravSphere loader applies, folded into `good`
+        # so every downstream index (including mem[good]) stays consistent. Off by default:
+        # the headline two-population fit runs unclipped on the full catalogue.
+        _v = np.asarray(vlos, float) - V_SYS
+        _med = np.median(_v[good])
+        _mad = 1.4826 * np.median(np.abs(_v[good] - _med)) + 1e-9
+        _n0 = int(good.sum())
+        good = good & (np.abs(_v - _med) < vclip_sigma * _mad)
+        if int(good.sum()) < _n0:
+            print(f"    [wp11 loader] velocity {vclip_sigma:g}-sigma clip: removed "
+                  f"{_n0 - int(good.sum())} of {_n0}")
     R_kpc = _semi_major_axis_radius(ra[good], dec[good])
     out = dict(R_pc=R_kpc * 1000.0, vlos=vlos[good] - V_SYS,
                feh=feh[good], everr=verr[good], efeh=feherr[good])
@@ -5810,12 +5878,20 @@ def run_pop3_robustness(feh_cuts=(None, -3.00, -2.75, -2.50), nsteps=8000, nproc
 
 
 def run_wp11(nwalkers=64, nsteps=6000, nproc=None, backend="wp11.h5", resume=None,
-             use_mock=False, feh_quality_keep=None, catalog=None, mock_seed=3):
+             use_mock=False, feh_quality_keep=None, catalog=None, mock_seed=3,
+             vclip_sigma=None):
     """
     Walker & Penarrubia (2011) mass-slope measurement on the real Tolstoy+2023 data (or a
     known-Gamma mock with use_mock=True). Analytic likelihood -> fast; converges in minutes.
     Re-run to resume from `backend`. Writes wp11_chain.npy, figure_wp11_corner.png and the
     WP11 Fig.10-style figure_wp11.png. Reports Gamma and the NFW-exclusion significance.
+
+    vclip_sigma: optional robust (MAD) velocity-outlier clip, off by default. The headline
+    Gamma is fit on the full catalogue, whereas the Jeans and GravSphere fits clip at
+    4 sigma because their binned dispersions are exposed to a single interloper. Passing
+    vclip_sigma=4 applies the same clip here, to measure how much that difference in sample
+    definition moves Gamma. Clipped runs get their own backend and a _vclip tag on every
+    output, so the unclipped chain is never overwritten.
     """
     import os, emcee, multiprocessing as mp
     if nproc is None:
@@ -5831,7 +5907,8 @@ def run_wp11(nwalkers=64, nsteps=6000, nproc=None, backend="wp11.h5", resume=Non
         _wp11_set_ndim(with_fmem=False)      # synthetic data are pure members by construction
         print(f"  MOCK: {len(data['R_pc'])} stars; true Gamma = {Gamma_true:.2f}")
     else:
-        data = wp11_load_data(catalog=catalog, feh_quality_keep=feh_quality_keep)
+        data = wp11_load_data(catalog=catalog, feh_quality_keep=feh_quality_keep,
+                              vclip_sigma=vclip_sigma)
         print(f"  real: {len(data['R_pc'])} stars"
               + (f" ({WP11_NDIM}-parameter fit, foreground modelled)"
                  if WP11_NDIM > 9 else " (members)"))
@@ -5904,7 +5981,8 @@ def run_wp11(nwalkers=64, nsteps=6000, nproc=None, backend="wp11.h5", resume=Non
     flat = s.get_chain(discard=rep['burn'], thin=rep['thin'], flat=True)
     if len(flat) < 100:
         flat = s.get_chain(discard=max(1, s.iteration // 3), flat=True)
-    _tag = f"_mock_s{mock_seed}" if use_mock else ""   # mock runs must not overwrite real outputs
+    _tag = (f"_mock_s{mock_seed}" if use_mock
+            else (f"_vclip{vclip_sigma:g}" if vclip_sigma else ""))
     np.save(_gf(f"wp11_chain{_tag}.npy"), flat)        # --fig4all reads the untagged one
     try:
         make_corner_plot(flat, WP11_TEX, _gf(f"figure_wp11{_tag}_corner.png"))
@@ -5961,6 +6039,13 @@ if __name__ == "__main__":
                           "spectroscopically-preselected sample the decomposition is degenerate "
                           "(P_mem_PM = 1.0 for every star), which is itself the documented "
                           "result. Retained so that claim stays reproducible.")
+    _ap.add_argument("--vclip", type=float, default=None, metavar="SIGMA",
+                     help="Apply a robust MAD velocity clip at SIGMA to the two-population "
+                          "(--wp11) sample. Off by default: the headline Gamma is fit on the "
+                          "full catalogue, while the Jeans and GravSphere fits clip at 4 sigma "
+                          "because their binned dispersions are exposed to a single outlier. "
+                          "Use --vclip 4 to check how much that difference matters. Gets its "
+                          "own backend so the unclipped chain is never overwritten.")
     _ap.add_argument("--mockseed", type=int, default=3,
                      help="Random seed for the WP11 known-Gamma mock (--wp11 --mock). Vary to "
                           "test whether the recovery offset is systematic or a single-draw "
@@ -6193,9 +6278,11 @@ if __name__ == "__main__":
         _bk = _args.backend if _args.backend != "scl25.h5" else _gf("wp11.h5")
         if _args.mock and _bk == _gf("wp11.h5"):
             _bk = _gf(f"wp11_mock_s{_args.mockseed}.h5")   # never share the real backend
+        if _args.vclip and _bk == _gf("wp11.h5"):
+            _bk = _gf(f"wp11_vclip{_args.vclip:g}.h5")     # keep the unclipped chain intact
         run_wp11(nsteps=_args.steps, nproc=(_args.nproc or None), backend=_bk,
                  use_mock=_args.mock, resume=(False if _args.no_resume else None),
-                 mock_seed=_args.mockseed)
+                 mock_seed=_args.mockseed, vclip_sigma=_args.vclip)
         sys.exit(0)
 
     if _args.continuous:                              # continuous f(J,[Fe/H]) model, then exit
