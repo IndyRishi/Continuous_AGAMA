@@ -239,6 +239,64 @@ def _gf(name):
     return f"{key}_{name}"
 
 
+def _chain_npy_for(backend, default_backend, legacy_name):
+    """Filename for a run's flattened chain, derived from its backend.
+
+    The headline run keeps its historical name, so existing workflows and every downstream
+    reader are unaffected. Any run against a different backend -- a sensitivity test at
+    another anisotropy radius, prior, seed or tracer scale -- writes a correspondingly
+    different .npy instead of silently overwriting the headline one. That overwrite is
+    otherwise invisible: the two runs use separate .h5 files, so the backends survive and
+    only the flattened view is lost, which is easy to miss until a derived quantity comes
+    out attached to the wrong posterior. Recoverable after the fact with
+    rebuild_chain_npy(), but better not to lose it. Naming matches that function, so
+    'dm5_ra100.h5' -> 'dm5_ra100_chain.npy'.
+    """
+    if backend == default_backend:
+        return _gf(legacy_name)
+    base = os.path.basename(backend)
+    return _gf((base[:-3] if base.endswith('.h5') else base) + "_chain.npy")
+
+
+def _backend_config_guard(backend, config, resuming):
+    """Refuse to resume a chain whose stored run configuration differs from this one.
+
+    emcee resumes on shape alone: same ndim and nwalkers and it appends without complaint.
+    That is the wrong criterion here, because the sensitivity runs of this work change the
+    likelihood while leaving the shape untouched -- a different Osipkov-Merritt r_a, a
+    different gamma prior, a different tracer scale, a different binning. Resuming one into
+    another silently concatenates samples from two posteriors into a file that still looks
+    healthy and still reports plausible medians, and no convergence diagnostic will flag it.
+
+    A configuration stamp is written into the backend on the first (fresh) run and checked
+    on every resume. On a mismatch this raises rather than resetting, because resetting
+    would destroy the stored chain, which is the more expensive thing to lose.
+    """
+    if not HAS_H5PY or backend is None or not os.path.exists(backend):
+        return
+    import json, h5py
+    payload = json.dumps({k: (list(v) if isinstance(v, tuple) else v)
+                          for k, v in sorted(config.items())}, sort_keys=True)
+    with h5py.File(backend, 'a') as fh:
+        stored = fh.attrs.get('run_config')
+        if stored is not None and isinstance(stored, bytes):
+            stored = stored.decode()
+        if not resuming or stored is None:
+            fh.attrs['run_config'] = payload          # fresh run, or an older un-stamped file
+            return
+        if stored == payload:
+            return
+        old, new = json.loads(stored), json.loads(payload)
+        diff = [f"{k}: stored={old.get(k)!r} -> now={new.get(k)!r}"
+                for k in sorted(set(old) | set(new)) if old.get(k) != new.get(k)]
+    raise RuntimeError(
+        f"refusing to resume {backend}: it was written under a different configuration.\n"
+        + "\n".join(f"    {d}" for d in diff)
+        + f"\n  Resuming would append samples from a different posterior to the stored chain.\n"
+          f"  Pass --backend <newname>.h5 to run this variant separately, or --no-resume to\n"
+          f"  discard {backend} and start over (this destroys the stored chain).")
+
+
 def set_galaxy(name):
     """Switch the active galaxy; reassigns the geometric/kinematic module constants so all
     loaders pick up the new target. Returns the galaxy parameter dict."""
@@ -1290,6 +1348,10 @@ def run_dm5_chain(nwalkers=24, nsteps=4000, nproc=None, backend="dm5.h5", resume
     moves = [(emcee.moves.DEMove(), 0.8), (emcee.moves.DESnookerMove(), 0.2)]
     bk = emcee.backends.HDFBackend(backend) if HAS_H5PY else None
     resume_ok = bool(resume and bk is not None and os.path.exists(backend) and bk.iteration > 0)
+    _backend_config_guard(backend, dict(fit="dm5", r_a=JEANS_RA,
+                                        gamma_prior=JEANS_GAMMA_PRIOR, nbins=nbins,
+                                        seed=seed, catalog=catalog,
+                                        feh_quality_keep=feh_quality_keep), resume_ok)
     pool = _make_pool(nproc)
     try:
         s = emcee.EnsembleSampler(nw, ndim, agama_lnprob_jeans,
@@ -1312,7 +1374,10 @@ def run_dm5_chain(nwalkers=24, nsteps=4000, nproc=None, backend="dm5.h5", resume
     flat = s.get_chain(discard=rep['burn'], thin=rep['thin'], flat=True)
     if len(flat) < 50:
         flat = s.get_chain(discard=max(1, s.iteration // 3), flat=True)
-    np.save(_gf("dm5_chain.npy"), flat)
+    _npy = _chain_npy_for(backend, "dm5.h5", "dm5_chain.npy")
+    np.save(_npy, flat)
+    if _npy != _gf("dm5_chain.npy"):
+        print(f"  wrote {_npy} (non-default backend; headline dm5_chain.npy left untouched)")
     try:
         make_corner_plot(flat, labels, _gf("figure_dm5_corner.png"))
     except Exception as exc:
@@ -2020,6 +2085,10 @@ def run_gravsphere_chain(nwalkers=24, nsteps=3000, nproc=None, backend="gravsphe
     moves = [(emcee.moves.DEMove(), 0.8), (emcee.moves.DESnookerMove(), 0.2)]
     bk = emcee.backends.HDFBackend(backend) if HAS_H5PY else None
     resume_ok = bool(resume and bk is not None and os.path.exists(backend) and bk.iteration > 0)
+    _backend_config_guard(backend, dict(fit="gravsphere", a_star=round(a_star, 6),
+                                        use_vsp=bool(use_vsp), nbins=nbins,
+                                        catalog=catalog,
+                                        feh_quality_keep=feh_quality_keep), resume_ok)
     pool = _make_pool(nproc)
     try:
         s = emcee.EnsembleSampler(nw, ndim, _gs_lnprob,
@@ -2042,7 +2111,10 @@ def run_gravsphere_chain(nwalkers=24, nsteps=3000, nproc=None, backend="gravsphe
     flat = s.get_chain(discard=rep['burn'], thin=rep['thin'], flat=True)
     if len(flat) < 50:
         flat = s.get_chain(discard=max(1, s.iteration // 3), flat=True)
-    np.save(_gf("gravsphere_chain.npy"), flat)
+    _npy = _chain_npy_for(backend, "gravsphere.h5", "gravsphere_chain.npy")
+    np.save(_npy, flat)
+    if _npy != _gf("gravsphere_chain.npy"):
+        print(f"  wrote {_npy} (non-default backend; headline gravsphere_chain.npy left untouched)")
     try:
         make_corner_plot(flat, labels, _gf("figure_gravsphere_corner.png"))
     except Exception as exc:
@@ -3723,6 +3795,249 @@ def run_enclosed_mass(r=R_PINCH_KPC, nthin=400):
     return out
 
 
+RHO150_KPC = 0.15        # radius of the Read, Walker & Steger (2019) density diagnostic
+RWS19_THRESHOLD = 1.0e8  # Msun/kpc^3; their cusp/core dividing line at 150 pc
+RWS19_SCULPTOR_RHO = (1.49e8, 0.28e8, 0.23e8)   # their Table 1: value, +err, -err
+RWS19_SCULPTOR_GAM = (-0.83, 0.30, 0.25)        # their Table 1: LOCAL dln(rho)/dln(r) at 150 pc
+
+
+def _gnfw_local_slope(r, gamma, rs):
+    """Local logarithmic slope dln(rho)/dln(r) of a gNFW at radius r.
+
+    This is NOT the gamma this work fits. That gamma is the ASYMPTOTIC slope as r -> 0;
+    this is the slope actually attained at r, which is always steeper because the (1+r/rs)
+    term has begun to bite. Read, Walker & Steger (2019) quote gamma_DM(150 pc) in this
+    local sense, so comparing their number against a fitted asymptotic gamma compares two
+    different quantities. Sign convention follows theirs (negative for a declining profile),
+    which is the opposite of Equation 2 of this paper.
+    """
+    x = r / rs
+    return -(gamma + (3.0 - gamma) * x / (1.0 + x))
+
+
+def _dm5_local_density(theta, r):
+    """Local DM density at r [kpc] for one spherical-Jeans sample.
+
+    Built from the same potential object the likelihood uses, so the density and the
+    enclosed mass of run_enclosed_mass() cannot drift apart. AGAMA's density() wants an
+    (N,3) point array; the finite-difference fallback exists only so a version mismatch
+    degrades to a slightly noisier number rather than a crash.
+    """
+    pot = dm_potential_5p(theta[0], 10.0 ** theta[1], theta[2], 1.0, 3.0)
+    try:
+        return float(np.atleast_1d(pot.density(np.array([[r, 0.0, 0.0]])))[0])
+    except Exception:
+        h = 1e-3 * r
+        dM = pot.enclosedMass(r + h) - pot.enclosedMass(r - h)
+        return float(dM / (2.0 * h) / (4.0 * np.pi * r ** 2))
+
+
+def run_central_density(r=RHO150_KPC, nthin=2000, threshold=RWS19_THRESHOLD):
+    """Local DM density at r from each converged chain, against the RWS19 threshold.
+
+    Read, Walker & Steger (2019) classify dwarfs by rho_DM(150 pc) rather than by inner
+    slope: systems quenched more than ~6 Gyr ago sit above 1e8 Msun/kpc^3 and are read as
+    cusp-like, those with extended star formation below it. That is a different axis from
+    gamma, and Sculptor need not land on the same side of both -- a shallow inner slope and
+    a high central normalization are not mutually exclusive in a gNFW, because r_s and the
+    normalization absorb what gamma does not. Densities are propagated through the
+    posterior for the same reason the masses are: rho is nonlinear in gamma, r_s and the
+    normalization, so evaluating at the median parameters is not the median density. Reads
+    the saved chains; writes nothing.
+    """
+    print("=" * 70)
+    print(f"  LOCAL DM DENSITY AT r = {r * 1e3:.0f} pc   (RWS19 threshold "
+          f"{threshold:.0e} Msun/kpc^3)")
+    print("=" * 70)
+    out = {}
+
+    def _report(label, rho):
+        rho = np.asarray(rho, float)
+        rho = rho[np.isfinite(rho) & (rho > 0)]
+        if rho.size == 0:
+            print(f"  {label:<18} no finite samples")
+            return None
+        q = np.percentile(rho, [16, 50, 84])
+        frac = float(np.mean(rho > threshold))
+        # P is the noisiest thing here and it is the quantity the classification turns on,
+        # so carry its Monte Carlo error rather than quoting three digits of false precision.
+        se = float(np.sqrt(max(frac * (1.0 - frac), 1e-12) / rho.size))
+        print(f"  {label:<18} {q[1]:.3e} (+{q[2]-q[1]:.2e}/-{q[1]-q[0]:.2e}) Msun/kpc^3"
+              f"   log10 = {np.log10(q[1]):.3f}")
+        print(f"  {'':18} P(rho > {threshold:.0e}) = {frac:.3f} +/- {se:.3f} (MC)"
+              f"   -> {'cusp-like' if frac > 0.5 else 'core-like'} on the RWS19 axis")
+        if abs(frac - 0.5) < 3.0 * se:
+            print(f"  {'':18} WARNING: within 3 sigma of the threshold -- report as "
+                  f"straddling it, not as a classification")
+        return dict(q16=q[0], q50=q[1], q84=q[2], p_above=frac, p_se=se, n=rho.size)
+
+    # -- spherical Jeans -----------------------------------------------------
+    try:
+        flat = np.load(_gf('dm5_chain.npy'))
+        thin = flat[:: max(1, len(flat) // nthin)]
+        rho = []
+        for t in thin:
+            try:
+                rho.append(_dm5_local_density(t, r))
+            except Exception:
+                pass
+        out['jeans'] = _report('Spherical Jeans', rho)
+    except FileNotFoundError:
+        print("  Spherical Jeans    dm5_chain.npy not found -- run --dm5 first")
+
+    # -- GravSphere ----------------------------------------------------------
+    try:
+        # No thinning: this is a closed-form vectorized evaluation, so the full chain costs
+        # nothing, and thinning to a few hundred puts ~2 sigma of Monte Carlo noise on the
+        # threshold fraction that the classification depends on.
+        flat = np.load(_gf('gravsphere_chain.npy'))
+        rho = _gs_gnfw_rho(r, flat[:, 0], 10.0 ** flat[:, 1], 10.0 ** flat[:, 2])
+        out['gravsphere'] = _report('GravSphere', rho)
+    except FileNotFoundError:
+        print("  GravSphere         gravsphere_chain.npy not found -- run --gravsphere first")
+
+    # -- two-population: order-of-magnitude cross-check only -----------------
+    # NOT a third entry in the RWS19 comparison. Two reasons, both of which push the same
+    # way and neither of which is a small correction: this is a MEAN enclosed density,
+    # which exceeds the local density at the same radius for any declining profile, and it
+    # is a DYNAMICAL mass carrying the Walker+2009 normalization rather than a DM-only
+    # mass. It is here to catch an order-of-magnitude error in the two profile evaluations
+    # above, nothing more.
+    try:
+        d = wp11_derived(np.load(_gf('wp11_chain.npy')))
+        rh1_kpc = d['rh1'] / 1e3
+        rho_mean = d['M1'] / ((4.0 / 3.0) * np.pi * rh1_kpc ** 3)
+        q = np.percentile(rho_mean, [16, 50, 84])
+        rq = np.percentile(rh1_kpc, [16, 50, 84])
+        out['wp11_mean'] = dict(q16=q[0], q50=q[1], q84=q[2], rh1_kpc=rq[1])
+        print(f"\n  cross-check (not a comparison to RWS19):")
+        print(f"  {'Two-population':<18} mean enclosed rho = {q[1]:.3e} "
+              f"(+{q[2]-q[1]:.2e}/-{q[1]-q[0]:.2e}) Msun/kpc^3")
+        print(f"  {'':18} inside r_h,1 = {rq[1]:.3f} kpc; mean not local, dynamical not DM-only")
+        if out.get('gravsphere'):
+            # Compare at r_h,1, NOT at r: the WP11 number is a mean inside r_h,1, and a mean
+            # inside R must exceed the local density at that same R for any declining
+            # profile. Comparing it against the local density at a smaller radius mixes two
+            # effects and inverts the expected direction.
+            try:
+                gflat = np.load(_gf('gravsphere_chain.npy'))
+                rho_loc_rh1 = np.median(_gs_gnfw_rho(rq[1], gflat[:, 0],
+                                                     10.0 ** gflat[:, 1], 10.0 ** gflat[:, 2]))
+                ratio = q[1] / rho_loc_rh1
+                ok = 0.5 < ratio < 3.0
+                print(f"  {'':18} vs GravSphere LOCAL rho({rq[1]*1e3:.0f} pc) = {rho_loc_rh1:.3e}"
+                      f"  -> ratio {ratio:.2f}")
+                print(f"  {'':18} ({'consistent' if ok else 'CHECK -- order-of-magnitude discrepancy'};"
+                      f" expect modestly above 1, since a mean inside R exceeds the local"
+                      f" value at R, offset by the dynamical-vs-DM normalization)")
+            except FileNotFoundError:
+                pass
+    except FileNotFoundError:
+        print("  Two-population     wp11_chain.npy not found -- run --wp11 first")
+
+    # -- profile-shape context ----------------------------------------------
+    # The point worth making in the text: the two profiles can agree on rho(150 pc) while
+    # differing by ~0.5 in gamma. Quote this ratio rather than asserting agreement.
+    if out.get('jeans') and out.get('gravsphere'):
+        ratio = out['jeans']['q50'] / out['gravsphere']['q50']
+        print(f"\n  Jeans / GravSphere median rho({r*1e3:.0f} pc) = {ratio:.3f}"
+              f"   (asymptotic inner slopes differ by ~0.5)")
+
+    # -- local slope, in the RWS19 convention -------------------------------
+    # Apples-to-apples against their gamma_DM(150 pc). The fitted gamma of this work is the
+    # asymptotic r->0 slope and is systematically shallower than the slope attained at
+    # 150 pc, so the two must not be compared directly.
+    print(f"\n  local dln(rho)/dln(r) at {r*1e3:.0f} pc  (RWS19 convention; NOT the fitted "
+          f"asymptotic gamma):")
+    for key, fname, cols in (('jeans', 'dm5_chain.npy', (0, 1)),
+                             ('gravsphere', 'gravsphere_chain.npy', (0, 1))):
+        try:
+            flat = np.load(_gf(fname))
+            sl = _gnfw_local_slope(r, flat[:, cols[0]], 10.0 ** flat[:, cols[1]])
+            sl = sl[np.isfinite(sl)]
+            qs = np.percentile(sl, [16, 50, 84])
+            g_asym = np.median(flat[:, cols[0]])
+            print(f"  {key:<18} {qs[1]:.2f} (+{qs[2]-qs[1]:.2f}/-{qs[1]-qs[0]:.2f})"
+                  f"   [fitted asymptotic gamma = {g_asym:.2f}]")
+            out.setdefault(key, {})['slope150'] = (qs[0], qs[1], qs[2])
+        except FileNotFoundError:
+            pass
+    print(f"  {'RWS19 Sculptor':<18} {RWS19_SCULPTOR_GAM[0]:.2f} "
+          f"(+{RWS19_SCULPTOR_GAM[1]:.2f}/-{RWS19_SCULPTOR_GAM[2]:.2f})   [their Table 1]")
+
+    # -- direct comparison against the published Sculptor value -------------
+    if out.get('gravsphere') and GAL['name'].lower() == 'sculptor':
+        v, hi, lo = RWS19_SCULPTOR_RHO
+        mine = out['gravsphere']['q50']
+        err = np.hypot(out['gravsphere']['q50'] - out['gravsphere']['q16'], hi)
+        print(f"\n  vs RWS19 Sculptor rho({r*1e3:.0f} pc) = {v:.3e} "
+              f"(+{hi:.2e}/-{lo:.2e}):  this work / theirs = {mine/v:.2f}, "
+              f"offset {abs(mine-v)/max(err,1e-30):.2f} sigma")
+    return out
+
+
+def rebuild_chain_npy(backend="dm5.h5", out=None, labels=None):
+    """Regenerate a flattened chain .npy from its emcee HDF5 backend.
+
+    The .npy files are a burned-in, thinned, flattened view of the backend, so nothing is
+    lost if one is deleted or overwritten -- provided the .h5 survives. This matters because
+    run_dm5_chain() and friends write a fixed .npy name regardless of which backend they ran
+    against, so a sensitivity run (a different r_a, prior or seed) silently clobbers the
+    headline .npy while leaving both .h5 files intact. This rebuilds the .npy from whichever
+    backend is named, applying the same burn-in and thinning rule as the original run so the
+    result is identical to what that run would have written.
+
+    Writes <out>, defaulting to the backend name with .h5 -> _chain.npy.
+    """
+    import os, emcee
+    if not HAS_H5PY:
+        raise RuntimeError("h5py not available; cannot read an HDF5 backend")
+    if not os.path.exists(backend):
+        raise FileNotFoundError(f"{backend} not found")
+    if out is None:
+        base = os.path.basename(backend)
+        out = _gf((base[:-3] if base.endswith('.h5') else base) + "_chain.npy")
+
+    bk = emcee.backends.HDFBackend(backend, read_only=True)
+    chain = bk.get_chain()                       # (nsteps, nwalkers, ndim)
+    nsteps, nwalkers, ndim = chain.shape
+    print("=" * 70)
+    print(f"  REBUILD {out}  from  {backend}")
+    print("=" * 70)
+    print(f"  {nsteps} steps x {nwalkers} walkers x {ndim} params")
+
+    # A read-only backend is not a sampler, so give mcmc_convergence_report the two
+    # attributes it actually uses. This keeps the burn/thin rule in one place rather than
+    # duplicating it here, where it could drift out of step with the production runs.
+    class _Shim:
+        def __init__(self, b):
+            self._b = b
+            self.acceptance_fraction = (np.asarray(b.accepted, float) / max(b.iteration, 1)
+                                        if hasattr(b, 'accepted') else np.array([np.nan]))
+        def get_chain(self, **kw):
+            return self._b.get_chain(**kw)
+        def get_autocorr_time(self, **kw):
+            return self._b.get_autocorr_time(**kw)
+        @property
+        def iteration(self):
+            return self._b.iteration
+
+    if labels is None:
+        labels = [f"p{k}" for k in range(ndim)]
+    shim = _Shim(bk)
+    rep = mcmc_convergence_report(shim, labels)
+    flat = shim.get_chain(discard=rep['burn'], thin=rep['thin'], flat=True)
+    if len(flat) < 50:                            # same fallback as the production runs
+        flat = shim.get_chain(discard=max(1, nsteps // 3), flat=True)
+    np.save(out, flat)
+    print(f"  wrote {out}  ({len(flat)} samples, burn={rep['burn']}, thin={rep['thin']})")
+    print("  === posterior (median +/- 68% CI) ===")
+    for k in range(ndim):
+        p16, p50, p84 = np.percentile(flat[:, k], [16, 50, 84])
+        print(f"    {labels[k]:<14}= {p50:8.3f}  (+{p84 - p50:.3f} / -{p50 - p16:.3f})")
+    return flat
+
+
 def _pa_and_axratio(x, y):
     """Major-axis position angle (deg east of north, mod 180) and axis ratio, from the second
     moments of the projected positions."""
@@ -4877,7 +5192,10 @@ def run_ap25_production_chain(nwalkers=60, nsteps=2000, nproc=None, backend="scl
     flat = sampler.get_chain(discard=burn, thin=thin, flat=True)
     if len(flat) < 50:                                # too short yet -> re-run to add steps
         flat = sampler.get_chain(discard=max(1, total // 3), flat=True)
-    np.save(_gf("ap25_chain.npy"), flat)
+    _npy = _chain_npy_for(backend, "scl25.h5", "ap25_chain.npy")
+    np.save(_npy, flat)
+    if _npy != _gf("ap25_chain.npy"):
+        print(f"  wrote {_npy} (non-default backend; headline ap25_chain.npy left untouched)")
     print(f"  saved {flat.shape[0]} posterior samples -> ap25_chain.npy")
     try:
         make_corner_plot(flat, TEX, "figure_ap25_corner.png")
@@ -5217,7 +5535,10 @@ def run_continuous_chain(nwalkers=None, nsteps=2000, nproc=None, backend="cont.h
         flat_free = s.get_chain(discard=max(1, s.iteration // 3), flat=True)
     flat = np.tile(template, (len(flat_free), 1))              # reconstruct full 18-col chain
     flat[:, free_idx] = flat_free
-    np.save(_gf("cont_chain.npy"), flat)
+    _npy = _chain_npy_for(backend, "cont.h5", "cont_chain.npy")
+    np.save(_npy, flat)
+    if _npy != _gf("cont_chain.npy"):
+        print(f"  wrote {_npy} (non-default backend; headline cont_chain.npy left untouched)")
     try:
         make_corner_plot(flat_free, free_tex, _gf("figure_continuous_corner.png"))
     except Exception as exc:
@@ -6186,6 +6507,20 @@ if __name__ == "__main__":
                           "through the posterior. Quantifies the claim that the frameworks "
                           "agree where their density profiles cross and diverge outside it. "
                           "Requires --dm5, --gravsphere and --wp11 to have been run.")
+    _ap.add_argument("--rebuild-npy", type=str, default=None, dest="rebuild_npy",
+                     metavar="BACKEND.h5",
+                     help="Regenerate a flattened chain .npy from its emcee HDF5 backend, "
+                          "using the same burn-in and thinning rule as the original run. "
+                          "Use this when a sensitivity run has overwritten a headline .npy: "
+                          "the .h5 files are separate, so nothing is actually lost. Writes "
+                          "<backend>_chain.npy, e.g. --rebuild-npy dm5.h5 -> dm5_chain.npy.")
+    _ap.add_argument("--rho150", action="store_true",
+                     help="Local DM density at r = 0.15 kpc from each converged chain, "
+                          "propagated through the posterior, against the 1e8 Msun/kpc^3 "
+                          "threshold of Read, Walker & Steger (2019). Their diagnostic is "
+                          "central density rather than inner slope, so a galaxy can be "
+                          "core-like in gamma and cusp-like in rho. Requires --dm5, "
+                          "--gravsphere and --wp11 to have been run.")
     _ap.add_argument("--subpop-pa", action="store_true", dest="subpop_pa",
                      help="Position angles of the two metallicity subcomponents, with bootstrap "
                           "errors, and their misalignment. Tests the specific mechanism Genina "
@@ -6305,6 +6640,16 @@ if __name__ == "__main__":
         run_enclosed_mass()
         sys.exit(0)
 
+    if _args.rebuild_npy:                             # regenerate a .npy from its backend
+        _lab = ([r'$\gamma$', r'$\log_{10}r_s$', r'$\log_{10}M_{\rm DM}$']
+                if 'dm5' in _args.rebuild_npy else None)
+        rebuild_chain_npy(_args.rebuild_npy, labels=_lab)
+        sys.exit(0)
+
+    if _args.rho150:                                  # central density vs RWS19, then exit
+        run_central_density()
+        sys.exit(0)
+
     if _args.subpop_pa:                               # subpopulation PAs, then exit
         run_subpop_pa(split_frac=_args.splitfrac)
         sys.exit(0)
@@ -6380,8 +6725,20 @@ if __name__ == "__main__":
 
     if _args.dm5:                                     # 5-parameter DM model (robust+fast), then exit
         _bk = _args.backend if _args.backend != "scl25.h5" else _gf("dm5.h5")
-        if _args.seed != 42 and _bk == _gf("dm5.h5"):
-            _bk = _gf(f"dm5_seed{_args.seed}.h5")     # don't mix seeds in one backend
+        if _bk == _gf("dm5.h5"):
+            # Any run that changes the likelihood gets its own backend, so a sensitivity
+            # test can never resume into -- or reset -- the headline chain. Mirrors the
+            # --astar handling for GravSphere. _backend_config_guard() catches the rest.
+            _sfx = ""
+            if _args.seed != 42:
+                _sfx += f"_seed{_args.seed}"
+            if _args.ra is not None:
+                _sfx += f"_ra{_args.ra:g}"
+            if _args.gammaprior is not None:
+                _sfx += f"_gp{_args.gammaprior[0]:g}-{_args.gammaprior[1]:g}"
+            if _sfx:
+                _bk = _gf(f"dm5{_sfx}.h5")
+                print(f"  [backend] variant run -> {_bk} (headline dm5.h5 untouched)")
         run_dm5_chain(nwalkers=(_args.walkers if 14 <= _args.walkers <= 200 else 24),
                       nsteps=_args.steps, nproc=(_args.nproc or None),
                       backend=_bk, resume=(False if _args.no_resume else None),
