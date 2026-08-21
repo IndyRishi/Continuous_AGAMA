@@ -6507,6 +6507,11 @@ if __name__ == "__main__":
                           "through the posterior. Quantifies the claim that the frameworks "
                           "agree where their density profiles cross and diverge outside it. "
                           "Requires --dm5, --gravsphere and --wp11 to have been run.")
+    _ap.add_argument("--nbins", type=int, default=None, metavar="N",
+                     help="Number of equal-count sigma_los bins per population for the "
+                          "spherical Jeans fit (default 6). Use for the binning sensitivity "
+                          "test; runs against its own backend so the headline chain is "
+                          "untouched.")
     _ap.add_argument("--rebuild-npy", type=str, default=None, dest="rebuild_npy",
                      metavar="BACKEND.h5",
                      help="Regenerate a flattened chain .npy from its emcee HDF5 backend, "
@@ -6736,13 +6741,16 @@ if __name__ == "__main__":
                 _sfx += f"_ra{_args.ra:g}"
             if _args.gammaprior is not None:
                 _sfx += f"_gp{_args.gammaprior[0]:g}-{_args.gammaprior[1]:g}"
+            if _args.nbins is not None and _args.nbins != 6:
+                _sfx += f"_nb{_args.nbins}"
             if _sfx:
                 _bk = _gf(f"dm5{_sfx}.h5")
                 print(f"  [backend] variant run -> {_bk} (headline dm5.h5 untouched)")
         run_dm5_chain(nwalkers=(_args.walkers if 14 <= _args.walkers <= 200 else 24),
                       nsteps=_args.steps, nproc=(_args.nproc or None),
                       backend=_bk, resume=(False if _args.no_resume else None),
-                      seed=_args.seed)
+                      seed=_args.seed,
+                      nbins=(_args.nbins if _args.nbins else 6))
         sys.exit(0)
 
     if _args.chain:                                   # full production chain, then exit
