@@ -4038,6 +4038,76 @@ def rebuild_chain_npy(backend="dm5.h5", out=None, labels=None):
     return flat
 
 
+def cont_free_indices(fix_nuisance=True, fix_shape=False):
+    """Indices of the sampled parameters in the 18-element continuous-DF vector.
+
+    Mirrors the selection in run_continuous_chain() but derives it from CONT_PARAM_NAMES
+    rather than hard-coding positions, so it stays correct if the vector is reordered. With
+    the published settings (nuisance fixed, shape free) this returns the 13 free parameters.
+    """
+    nuis = [CONT_PARAM_NAMES.index(p) for p in ('V_C', 'sigV_C', 'M_C', 'sigM_C', 'f_C')]
+    shape = [CONT_PARAM_NAMES.index(p) for p in ('alpha', 'eta')]
+    fixed = set((nuis if fix_nuisance else []) + (shape if fix_shape else []))
+    return np.array([i for i in range(CONT_NDIM) if i not in fixed])
+
+
+def rebuild_cont_corner(backend="cont.h5", out=None, fix_nuisance=True, fix_shape=False):
+    """Regenerate the continuous-DF corner plot from its backend, without sampling.
+
+    run_continuous_chain() writes the corner only at the end of a run, which is not a
+    practical way to refresh the figure: a single step of the 1339-star likelihood costs
+    about thirteen minutes. The plot is a pure function of the stored chain, so it can be
+    rebuilt from the .h5 alone. Burn-in and thinning come from mcmc_convergence_report(),
+    the same rule the production run applies, so the output matches what that run wrote.
+
+    Also prints gamma, k_J, g_z and h_z, which are the values the manuscript's continuous-DF
+    appendix quotes. If those disagree with the text, the text was written from a different
+    chain than the one on disk, and the text -- not the figure -- is what needs checking.
+    """
+    import os, emcee
+    if not HAS_H5PY:
+        raise RuntimeError("h5py not available; cannot read an HDF5 backend")
+    if not os.path.exists(backend):
+        raise FileNotFoundError(f"{backend} not found")
+    if out is None:
+        out = _gf("figure_continuous_corner.png")
+
+    free_idx = cont_free_indices(fix_nuisance, fix_shape)
+    free_tex = [CONT_TEX[i] for i in free_idx]
+
+    bk = emcee.backends.HDFBackend(backend, read_only=True)
+    nsteps, nwalkers, ndim = bk.get_chain().shape
+    print("=" * 70)
+    print(f"  REBUILD {out}  from  {backend}")
+    print("=" * 70)
+    print(f"  {nsteps} steps x {nwalkers} walkers x {ndim} params")
+    if ndim != len(free_idx):
+        print(f"  WARNING: backend has {ndim} sampled parameters, but the published "
+              f"configuration has {len(free_idx)}. This chain was run with different "
+              f"fix_shape/fix_nuisance settings than the manuscript describes; the labels "
+              f"below may not correspond to the columns.")
+        free_tex = free_tex[:ndim] + [f"p{k}" for k in range(len(free_tex), ndim)]
+
+    # rebuild_chain_npy() already wraps a read-only backend so mcmc_convergence_report()
+    # can consume it, and writing the .npy alongside is harmless: it is the same burned-in,
+    # thinned view this plot uses, under the backend's own name.
+    flat_free = rebuild_chain_npy(backend, labels=free_tex[:ndim])
+
+    make_corner_plot(flat_free, free_tex[:ndim], out)
+    print(f"  wrote {out}")
+
+    print("  === values quoted in the continuous-DF appendix ===")
+    cols = list(free_idx[:ndim])
+    for nm in ('gamma', 'kJ', 'gz', 'hz'):
+        k = CONT_PARAM_NAMES.index(nm)
+        if k in cols:
+            p16, p50, p84 = np.percentile(flat_free[:, cols.index(k)], [16, 50, 84])
+            print(f"    {nm:<6}= {p50:8.3f}  (+{p84 - p50:.3f} / -{p50 - p16:.3f})")
+    print("    g_z and h_z are expected against the 1.5 prior ceiling; gamma is expected "
+          "to be broad or bimodal.")
+    return flat_free
+
+
 def _pa_and_axratio(x, y):
     """Major-axis position angle (deg east of north, mod 180) and axis ratio, from the second
     moments of the projected positions."""
@@ -6512,6 +6582,12 @@ if __name__ == "__main__":
                           "spherical Jeans fit (default 6). Use for the binning sensitivity "
                           "test; runs against its own backend so the headline chain is "
                           "untouched.")
+    _ap.add_argument("--cont-corner", type=str, nargs="?", const="cont.h5", default=None,
+                     dest="cont_corner", metavar="BACKEND.h5",
+                     help="Regenerate figure_continuous_corner.png from an existing "
+                          "continuous-DF backend (default cont.h5) without sampling. Reads "
+                          "the chain only; takes seconds rather than the hours a fresh run "
+                          "would cost.")
     _ap.add_argument("--rebuild-npy", type=str, default=None, dest="rebuild_npy",
                      metavar="BACKEND.h5",
                      help="Regenerate a flattened chain .npy from its emcee HDF5 backend, "
@@ -6649,6 +6725,10 @@ if __name__ == "__main__":
         _lab = ([r'$\gamma$', r'$\log_{10}r_s$', r'$\log_{10}M_{\rm DM}$']
                 if 'dm5' in _args.rebuild_npy else None)
         rebuild_chain_npy(_args.rebuild_npy, labels=_lab)
+        sys.exit(0)
+
+    if _args.cont_corner:                             # redraw the continuous corner, then exit
+        rebuild_cont_corner(_args.cont_corner)
         sys.exit(0)
 
     if _args.rho150:                                  # central density vs RWS19, then exit
