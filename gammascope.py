@@ -38,13 +38,13 @@ of the Arroyo-Polonio et al. (2025) model, not used in the paper, which cites th
 published value instead. See --help for the full flag list.
 
 Command line:
-  python continuous_agama.py               # fast phases 1-4 + Phase-5 smoke test
-  python continuous_agama.py --dm5         # spherical-Jeans gNFW inner slope (real data)
-  python continuous_agama.py --gravsphere  # GravSphere: Jeans + VSPs, free beta(r)
-  python continuous_agama.py --chain       # full 25-parameter chain (cluster-scale)
-  python continuous_agama.py --overview    # data-overview figure (histograms/scatter)
-  python continuous_agama.py --compare     # gamma across all frameworks, one figure
-  python continuous_agama.py --help        # all options
+  python gammascope.py               # fast phases 1-4 + Phase-5 smoke test
+  python gammascope.py --dm5         # spherical-Jeans gNFW inner slope (real data)
+  python gammascope.py --gravsphere  # GravSphere: Jeans + VSPs, free beta(r)
+  python gammascope.py --chain       # full 25-parameter chain (cluster-scale)
+  python gammascope.py --overview    # data-overview figure (histograms/scatter)
+  python gammascope.py --compare     # gamma across all frameworks, one figure
+  python gammascope.py --help        # all options
 """
 
 import os
