@@ -258,6 +258,28 @@ def _chain_npy_for(backend, default_backend, legacy_name):
     return _gf((base[:-3] if base.endswith('.h5') else base) + "_chain.npy")
 
 
+def _figure_for(backend, default_backend, legacy_name):
+    """Filename for a run's figure, derived from its backend.
+
+    The same hazard as _chain_npy_for(), and worse in practice: a sensitivity run writes
+    plots under fixed names, so a variant chain silently replaces the headline figure while
+    the caption in the manuscript still quotes the headline numbers. Nothing errors, the
+    file is simply wrong, and the mismatch is only visible by reading values off the plot.
+    The headline run keeps its historical filename so existing figure references resolve
+    unchanged; every other backend gets a suffixed one, e.g. 'dm5_nb8.h5' ->
+    'figure_dm5_corner_nb8.png'.
+    """
+    if backend == default_backend:
+        return _gf(legacy_name)
+    base = os.path.basename(backend)
+    stem = base[:-3] if base.endswith('.h5') else base
+    root = os.path.basename(default_backend)
+    root = root[:-3] if root.endswith('.h5') else root
+    tag = stem[len(root):].lstrip('_') if stem.startswith(root) else stem
+    name, ext = os.path.splitext(legacy_name)
+    return _gf(f"{name}_{tag}{ext}")
+
+
 def _backend_config_guard(backend, config, resuming):
     """Refuse to resume a chain whose stored run configuration differs from this one.
 
@@ -1379,13 +1401,13 @@ def run_dm5_chain(nwalkers=24, nsteps=4000, nproc=None, backend="dm5.h5", resume
     if _npy != _gf("dm5_chain.npy"):
         print(f"  wrote {_npy} (non-default backend; headline dm5_chain.npy left untouched)")
     try:
-        make_corner_plot(flat, labels, _gf("figure_dm5_corner.png"))
+        make_corner_plot(flat, labels, _figure_for(backend, _gf("dm5.h5"), "figure_dm5_corner.png"))
     except Exception as exc:
         print(f"  corner skipped ({exc})")
     try:                                                        # gNFW -> (logMDM,log_rs,alpha=1,eta=3,gamma)
         n = len(flat)
         chain5 = np.column_stack([flat[:, 2], flat[:, 1], np.ones(n), 3.0 * np.ones(n), flat[:, 0]])
-        make_ap25_figure4(chain5, _gf("figure_ap25_fig4.png"))
+        make_ap25_figure4(chain5, _figure_for(backend, _gf("dm5.h5"), "figure_ap25_fig4_dm5.png"))
         print("  saved figure_ap25_fig4.png (paper Fig.4 from the gNFW posterior)")
     except Exception as exc:
         print(f"  Fig.4 skipped ({exc})")
@@ -2116,7 +2138,7 @@ def run_gravsphere_chain(nwalkers=24, nsteps=3000, nproc=None, backend="gravsphe
     if _npy != _gf("gravsphere_chain.npy"):
         print(f"  wrote {_npy} (non-default backend; headline gravsphere_chain.npy left untouched)")
     try:
-        make_corner_plot(flat, labels, _gf("figure_gravsphere_corner.png"))
+        make_corner_plot(flat, labels, _figure_for(backend, _gf("gravsphere.h5"), "figure_gravsphere_corner.png"))
     except Exception as exc:
         print(f"  corner skipped ({exc})")
 
@@ -2135,7 +2157,7 @@ def run_gravsphere_chain(nwalkers=24, nsteps=3000, nproc=None, backend="gravsphe
         ax.axhline(0, color='k', ls='--', lw=1); ax.set_xscale('log')
         ax.set_xlabel(r'Radius $r$ (kpc)'); ax.set_ylabel(r'Anisotropy $\beta(r)$')
         ax.grid(alpha=0.3, which='both')
-        fig.savefig(_gf("figure_gravsphere_beta.png"), dpi=140, bbox_inches='tight'); plt.close(fig)
+        fig.savefig(_figure_for(backend, _gf("gravsphere.h5"), "figure_gravsphere_beta.png"), dpi=140, bbox_inches='tight'); plt.close(fig)
         print("  saved figure_gravsphere_beta.png")
     except Exception as exc:
         print(f"  beta figure skipped ({exc})")
@@ -2150,7 +2172,7 @@ def run_gravsphere_chain(nwalkers=24, nsteps=3000, nproc=None, backend="gravsphe
             f2 = dm_potential_5p(g, rs, 0.0, 1.0, 3.0).enclosedMass(2.0)
             logMDM[k] = np.log10(max(pot_g.enclosedMass(2.0) / max(f2, 1e-300), 1e6))
         chain5 = np.column_stack([logMDM, flat[:, 1], np.ones(n), 3.0 * np.ones(n), flat[:, 0]])
-        make_ap25_figure4(chain5, _gf("figure_ap25_fig4.png"))
+        make_ap25_figure4(chain5, _figure_for(backend, _gf("gravsphere.h5"), "figure_ap25_fig4_gravsphere.png"))
         print("  saved figure_ap25_fig4.png (paper Fig.4 from the GravSphere posterior)")
     except Exception as exc:
         print(f"  Fig.4 skipped ({exc})")
@@ -4070,7 +4092,7 @@ def rebuild_cont_corner(backend="cont.h5", out=None, fix_nuisance=True, fix_shap
     if not os.path.exists(backend):
         raise FileNotFoundError(f"{backend} not found")
     if out is None:
-        out = _gf("figure_continuous_corner.png")
+        out = _figure_for(backend, _gf("cont.h5"), "figure_continuous_corner.png")
 
     free_idx = cont_free_indices(fix_nuisance, fix_shape)
     free_tex = [CONT_TEX[i] for i in free_idx]
@@ -5610,13 +5632,13 @@ def run_continuous_chain(nwalkers=None, nsteps=2000, nproc=None, backend="cont.h
     if _npy != _gf("cont_chain.npy"):
         print(f"  wrote {_npy} (non-default backend; headline cont_chain.npy left untouched)")
     try:
-        make_corner_plot(flat_free, free_tex, _gf("figure_continuous_corner.png"))
+        make_corner_plot(flat_free, free_tex, _figure_for(backend, _gf("cont.h5"), "figure_continuous_corner.png"))
     except Exception as exc:
         print(f"  corner skipped ({exc})")
     try:                                                        # Fig.4 from the DM sub-vector
         gi = CONT_PARAM_NAMES.index('gamma')
         chain5 = np.column_stack([flat[:, 0], flat[:, 1], flat[:, 2], flat[:, 3], flat[:, gi]])
-        make_ap25_figure4(chain5, _gf("figure_ap25_fig4.png"))
+        make_ap25_figure4(chain5, _figure_for(backend, _gf("cont.h5"), "figure_ap25_fig4_cont.png"))
         print("  saved figure_ap25_fig4.png (paper Fig.4 from the continuous posterior)")
     except Exception as exc:
         print(f"  Fig.4 skipped ({exc})")
