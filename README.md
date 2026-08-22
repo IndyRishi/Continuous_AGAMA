@@ -47,7 +47,7 @@ The same posteriors, evaluated on the `rho_DM(150 pc)` diagnostic of Read, Walke
 (2019) rather than on the asymptotic slope:
 
 ```bash
-python continuous_agama.py --rho150
+python gammascope.py --rho150
 ```
 
 | Source | rho_DM(150 pc)  [1e8 Msun/kpc^3] | local slope at 150 pc |
@@ -158,14 +158,14 @@ real-data command to switch targets (outputs are automatically prefixed `fornax_
 ### Data presentation and evidence (fast)
 
 ```bash
-python continuous_agama.py --figure1        # two-galaxy data presentation (Sculptor + Fornax)
-python continuous_agama.py --overview       # data overview + [Fe/H] unimodality stats
-python continuous_agama.py --slide          # sliding-threshold sigma_los + gamma-degeneracy curve
-python continuous_agama.py --biasgate       # continuous-truth mocks: split vs continuous
-python continuous_agama.py --revgate        # discrete-truth mocks: the reverse comparison
-python continuous_agama.py --gatediag       # null and label-scramble controls (geometry vs chemistry)
-python continuous_agama.py --shrinkage      # prior shrinkage vs chain length
-python continuous_agama.py --biasconv       # mean bias vs number of mock realisations
+python gammascope.py --figure1        # two-galaxy data presentation (Sculptor + Fornax)
+python gammascope.py --overview       # data overview + [Fe/H] unimodality stats
+python gammascope.py --slide          # sliding-threshold sigma_los + gamma-degeneracy curve
+python gammascope.py --biasgate       # continuous-truth mocks: split vs continuous
+python gammascope.py --revgate        # discrete-truth mocks: the reverse comparison
+python gammascope.py --gatediag       # null and label-scramble controls (geometry vs chemistry)
+python gammascope.py --shrinkage      # prior shrinkage vs chain length
+python gammascope.py --biasconv       # mean bias vs number of mock realisations
 ```
 
 `--overview` writes its figure and exits; the others can be combined with `--galaxy`.
@@ -173,40 +173,40 @@ python continuous_agama.py --biasconv       # mean bias vs number of mock realis
 ### Dark-matter slope measurements (MCMC; resume by re-running)
 
 ```bash
-python continuous_agama.py --dm5            # spherical-Jeans gNFW inner slope
-python continuous_agama.py --gravsphere     # GravSphere: Jeans + VSPs + free beta(r)
-python continuous_agama.py --wp11           # Walker & Penarrubia 2011 two-population estimator
-python continuous_agama.py --continuous     # continuous f(J,[Fe/H]) model
-python continuous_agama.py --chain          # full 25-parameter AP25 action-DF (cluster-scale)
+python gammascope.py --dm5            # spherical-Jeans gNFW inner slope
+python gammascope.py --gravsphere     # GravSphere: Jeans + VSPs + free beta(r)
+python gammascope.py --wp11           # Walker & Penarrubia 2011 two-population estimator
+python gammascope.py --continuous     # continuous f(J,[Fe/H]) model
+python gammascope.py --chain          # full 25-parameter AP25 action-DF (cluster-scale)
 ```
 
 ### Derived quantities
 
 ```bash
-python continuous_agama.py --rho150         # rho_DM(150 pc) and local slope vs Read+2019
-python continuous_agama.py --menc           # enclosed mass at the fitted half-light radii
+python gammascope.py --rho150         # rho_DM(150 pc) and local slope vs Read+2019
+python gammascope.py --menc           # enclosed mass at the fitted half-light radii
 ```
 
 ### Robustness, comparison, and Gaia-based figures
 
 ```bash
-python continuous_agama.py --robustness     # WP11 slope vs Gaia PM membership threshold
-python continuous_agama.py --pop3           # WP11 slope vs very-metal-poor [Fe/H] floor
-python continuous_agama.py --compare        # gamma posteriors across frameworks
-python continuous_agama.py --fig4all        # DM density rho(r) from all chains + AP25's curve
-python continuous_agama.py --dispersion     # radial sigma_los profile (add --gaia for PM dispersion)
-python continuous_agama.py --skymap         # Gaia PM sky map with membership-cut panels
-python continuous_agama.py --actions        # action-space chemodynamics ([Fe/H] vs J_r)
-python continuous_agama.py --gmmdiag        # PM mixture identifiability diagnostic
+python gammascope.py --robustness     # WP11 slope vs Gaia PM membership threshold
+python gammascope.py --pop3           # WP11 slope vs very-metal-poor [Fe/H] floor
+python gammascope.py --compare        # gamma posteriors across frameworks
+python gammascope.py --fig4all        # DM density rho(r) from all chains + AP25's curve
+python gammascope.py --dispersion     # radial sigma_los profile (add --gaia for PM dispersion)
+python gammascope.py --skymap         # Gaia PM sky map with membership-cut panels
+python gammascope.py --actions        # action-space chemodynamics ([Fe/H] vs J_r)
+python gammascope.py --gmmdiag        # PM mixture identifiability diagnostic
 ```
 
 ### Validation / cross-checks
 
 ```bash
-python continuous_agama.py --continuous --mock     # recover known gamma, k_J
-python continuous_agama.py --wp11 --mock           # WP11 recovery on a known-Gamma mock
-python continuous_agama.py --crosscheck --repo <path/to/gravsphere>   # vs reference GravSphere
-python continuous_agama.py --crosscheck --repo <path> --mcmc          # + end-to-end posterior equivalence
+python gammascope.py --continuous --mock     # recover known gamma, k_J
+python gammascope.py --wp11 --mock           # WP11 recovery on a known-Gamma mock
+python gammascope.py --crosscheck --repo <path/to/gravsphere>   # vs reference GravSphere
+python gammascope.py --crosscheck --repo <path> --mcmc          # + end-to-end posterior equivalence
 ```
 
 ### Recovering lost outputs
@@ -215,8 +215,8 @@ Chains survive in their HDF5 backends even when the derived `.npy` or figure is 
 overwritten. Both can be rebuilt without re-sampling:
 
 ```bash
-python continuous_agama.py --rebuild-npy dm5.h5      # flattened chain from its backend
-python continuous_agama.py --cont-corner contfull.h5 # continuous corner plot, seconds not hours
+python gammascope.py --rebuild-npy dm5.h5      # flattened chain from its backend
+python gammascope.py --cont-corner contfull.h5 # continuous corner plot, seconds not hours
 ```
 
 ### Common flags
@@ -366,7 +366,7 @@ table, using the Mg spectral index W' as the chemical discriminant, D = 147 kpc.
 
 ## Repository layout
 
-- `continuous_agama.py` -- the complete pipeline: all four frameworks, the mock
+- `gammascope.py` -- the complete pipeline: all four frameworks, the mock
   experiments, the cross-validation against the reference GravSphere, and every figure.
 - `requirements.txt` -- pinned dependencies.
 - `figs/` -- generated figures.
